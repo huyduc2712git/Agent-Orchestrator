@@ -2,11 +2,11 @@
 
 const COLUMNS = [
   { key: "backlog", label: "To Do / Backlog", headClass: "col-backlog", statuses: ["backlog"] },
-  { key: "working", label: "In Progress", headClass: "col-in-progress", statuses: ["in_progress"] },
-  { key: "needs-you", label: "Needs Attention", headClass: "col-blocked", statuses: ["blocked"] },
+  { key: "working", label: "In Progress", headClass: "col-working", statuses: ["in_progress"] },
+  { key: "blocked", label: "Needs Attention", headClass: "col-blocked", statuses: ["blocked"] },
   { key: "testing", label: "In Testing / QA", headClass: "col-testing", statuses: ["testing"] },
   { key: "review", label: "In Review", headClass: "col-review", statuses: ["review"] },
-  { key: "ready", label: "Done / Ready", headClass: "col-done", statuses: ["done"] },
+  { key: "done", label: "Done / Ready", headClass: "col-done", statuses: ["done"] },
 ];
 
 const AGENT_INFO = {
@@ -90,9 +90,9 @@ document.querySelectorAll(".nav-item").forEach((btn) => {
   btn.addEventListener("click", () => switchView(btn.dataset.view));
 });
 
-const toggleSidebarBtn = document.querySelector(".sidebar-toggle-btn");
-if (toggleSidebarBtn) {
-  toggleSidebarBtn.addEventListener("click", (e) => {
+const brandToggleBtn = $("brand-toggle-btn") || document.querySelector(".sidebar-brand");
+if (brandToggleBtn) {
+  brandToggleBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     document.body.classList.toggle("sidebar-collapsed");
     const isCollapsed = document.body.classList.contains("sidebar-collapsed");
@@ -348,13 +348,13 @@ function parseMeta(t) {
 
 function pillFor(t, meta) {
   if (meta.pill_text) return { cls: meta.pill_cls || "pill-pending", text: meta.pill_text };
-  if (t.status === "in_progress") return { cls: "pill-working", text: "Working" };
-  if (t.status === "blocked" && t.type === "bug") return { cls: "pill-failed", text: "CI failed" };
-  if (t.status === "blocked") return { cls: "pill-changes", text: "Changes requested" };
-  if (t.status === "backlog") return { cls: "pill-queued", text: "Queued" };
-  if (t.status === "review") return { cls: "pill-pending", text: "Review pending" };
-  if (t.status === "testing") return { cls: "pill-pending", text: "QA in progress" };
-  if (t.status === "done") return { cls: "pill-ready", text: "Ready" };
+  if (t.status === "backlog") return { cls: "pill-backlog", text: "To Do" };
+  if (t.status === "in_progress") return { cls: "pill-working", text: "In Progress" };
+  if (t.status === "blocked" && t.type === "bug") return { cls: "pill-failed", text: "CI Failed" };
+  if (t.status === "blocked") return { cls: "pill-changes", text: "Needs Attention" };
+  if (t.status === "testing") return { cls: "pill-testing", text: "QA Testing" };
+  if (t.status === "review") return { cls: "pill-review", text: "In Review" };
+  if (t.status === "done") return { cls: "pill-ready", text: "Done" };
   return { cls: "pill-pending", text: t.status };
 }
 
@@ -541,7 +541,7 @@ function renderSidebar() {
         else if (t.status === "done") dotColor = "#74b98a";
 
         item.innerHTML = `<span class="dot" style="background:${dotColor}"></span><span class="label">${escapeHtml(t.title)}</span>`;
-        item.onclick = (e) => { e.stopPropagation(); selectProject(p.slug); openModal(t.id); };
+        item.onclick = (e) => { e.stopPropagation(); selectProject(p.slug); switchView("board"); };
         list.appendChild(item);
       }
     }
@@ -1068,14 +1068,19 @@ function connectWS() {
   ws.onclose = () => { const el = $("conn-status"); el.textContent = "● offline"; el.className = "conn offline"; setTimeout(connectWS, 3000); };
   ws.onmessage = (msg) => {
     const ev = JSON.parse(msg.data);
-    if (ev.type === "chat") { renderChatMessage(ev.message); notifyTab("chat"); }
-    else if (ev.type === "task_updated") {
-      state.tasks.set(ev.task.id, ev.task);
-      renderBoard();
+    if (ev.type === "chat") {
+      renderChatMessage(ev.message);
+      notifyTab("chat");
+    } else if (ev.type === "task_updated" || ev.type === "task_created") {
+      if (ev.task) state.tasks.set(ev.task.id, ev.task);
+      loadBoard();
       notifyTab("board");
-      if (state.openTaskId === ev.task.id) openModal(ev.task.id);
-    } else if (ev.type === "event" && state.openTaskId === ev.event.task_id) {
-      $("modal-events").appendChild(renderEvent(ev.event));
+      if (state.openTaskId === ev.task?.id) openModal(ev.task.id);
+    } else if (ev.type === "event") {
+      if (state.openTaskId === ev.event?.task_id) {
+        $("modal-events")?.appendChild(renderEvent(ev.event));
+      }
+      loadBoard();
     }
   };
 }
