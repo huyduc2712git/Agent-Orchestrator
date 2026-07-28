@@ -1,10 +1,12 @@
 /* Agent Orchestrator — Board (ảnh mẫu) + Chat (Ollie) */
 
 const COLUMNS = [
-  { key: "working", label: "Working", headClass: "working", statuses: ["in_progress"] },
-  { key: "needs-you", label: "Needs You", headClass: "needs-you", statuses: ["blocked", "backlog"] },
-  { key: "review", label: "In Review", headClass: "review", statuses: ["testing", "review"] },
-  { key: "ready", label: "Ready to Merge", headClass: "ready", statuses: ["done"] },
+  { key: "backlog", label: "To Do / Backlog", headClass: "col-backlog", statuses: ["backlog"] },
+  { key: "working", label: "In Progress", headClass: "col-in-progress", statuses: ["in_progress"] },
+  { key: "needs-you", label: "Needs Attention", headClass: "col-blocked", statuses: ["blocked"] },
+  { key: "testing", label: "In Testing / QA", headClass: "col-testing", statuses: ["testing"] },
+  { key: "review", label: "In Review", headClass: "col-review", statuses: ["review"] },
+  { key: "ready", label: "Done / Ready", headClass: "col-done", statuses: ["done"] },
 ];
 
 const AGENT_INFO = {
