@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agent Orchestrator</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body class="view-board-active">
+  <div class="app-shell">
+    <!-- ===== SIDEBAR (luôn hiện — giống ảnh mẫu) ===== -->
+    <aside class="app-sidebar">
+      <div class="sidebar-brand">
+        <span class="brand-logo">◇</span>
+        <span class="brand-text">Agent Orchestrator</span>
+      </div>
+
+      <nav class="sidebar-nav">
+        <button class="nav-item active" data-view="board">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+          Board
+        </button>
+        <button class="nav-item" data-view="chat">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+          Chat
+          <span class="nav-dot hidden" id="dot-chat"></span>
+        </button>
+      </nav>
+
+      <div class="sidebar-section">
+        <div class="sidebar-section-head">
+          <span>PROJECTS</span>
+          <button class="icon-btn-sm" id="btn-new-project" title="New project">+</button>
+        </div>
+        <div class="sidebar-projects" id="sidebar-projects"></div>
+      </div>
+
+      <div class="sidebar-footer">
+        <button class="sidebar-settings" id="sidebar-settings-btn">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+          Settings
+        </button>
+        <span class="conn" id="conn-status">…</span>
+      </div>
+    </aside>
+
+    <!-- ===== MAIN ===== -->
+    <div class="app-main">
+      <!-- BOARD -->
+      <section class="view view-board" id="view-board">
+        <header class="board-toolbar">
+          <div class="board-toolbar-left">
+            <h1>Tasks Board</h1>
+            <p id="board-subtitle">Chọn project ở sidebar — task mới sẽ nằm trong project đang chọn</p>
+          </div>
+          <div class="board-toolbar-right">
+            <button class="btn-ghost" id="btn-new-task-2">+ New task</button>
+            <button class="btn-orchestrator" id="btn-orchestrator">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a2 2 0 012 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 017 7h1a1 1 0 011 1v3a1 1 0 01-1 1h-1v1a2 2 0 01-2 2H5a2 2 0 01-2-2v-1H2a1 1 0 01-1-1v-3a1 1 0 011-1h1a7 7 0 017-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 012-2z"/></svg>
+              Orchestrator
+            </button>
+            <button class="icon-btn" id="bell-btn" title="Notifications">🔔</button>
+          </div>
+        </header>
+        <div class="kanban" id="board"></div>
+      </section>
+
+      <!-- CHAT -->
+      <section class="view view-chat hidden" id="view-chat">
+        <div class="chat-shell">
+          <header class="chat-header">
+            <div class="chat-header-top">
+              <div>
+                <h1>Chat</h1>
+                <p>Giao task cho Jarvis — orchestrator sẽ phân tích, chia việc và theo dõi trên board</p>
+              </div>
+            </div>
+            <div class="chat-agent">
+              <span class="avatar avatar-jarvis">J</span>
+              <div>
+                <div class="chat-agent-name">Jarvis</div>
+                <div class="chat-agent-role">Orchestrator</div>
+              </div>
+            </div>
+          </header>
+          <div class="chat-messages" id="chat-messages"></div>
+          <div class="chat-suggestions" id="chat-suggestions">
+            <button type="button" class="suggestion-chip" data-prompt="Tạo landing page HTML tĩnh cho quán cà phê, tông màu ấm">Tạo landing page</button>
+            <button type="button" class="suggestion-chip" data-prompt="Build trang web từ link Figma (dán link vào đây)">Build từ Figma</button>
+            <button type="button" class="suggestion-chip" data-prompt="Cho tôi xem tiến độ các task đang chạy trên board">Xem tiến độ board</button>
+            <button type="button" class="suggestion-chip" data-prompt="QA verify trang vừa build theo acceptance criteria cụ thể">Chạy QA verify</button>
+          </div>
+          <form class="chat-composer" id="chat-form">
+            <textarea id="chat-text" rows="1" placeholder="Ask me something or…"></textarea>
+            <button type="submit" class="send-btn" id="chat-send" title="Gửi">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+            </button>
+          </form>
+          <footer class="chat-footer">
+            <span class="footer-pill">Model: deepseek-v4-flash</span>
+            <span class="footer-pill" id="footer-project">Project: —</span>
+            <span class="footer-status" id="footer-status"><span class="status-pulse"></span> sẵn sàng</span>
+          </footer>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- Task detail modal -->
+  <div class="modal-backdrop hidden" id="modal-backdrop">
+    <div class="modal" id="modal">
+      <div class="modal-header">
+        <div>
+          <span class="task-id" id="modal-task-id"></span>
+          <span class="badge" id="modal-status"></span>
+          <span class="badge badge-type hidden" id="modal-type"></span>
+        </div>
+        <button class="modal-close" id="modal-close">×</button>
+      </div>
+      <h2 id="modal-title"></h2>
+      <div class="modal-meta" id="modal-meta"></div>
+      <div class="modal-actions" id="modal-actions"></div>
+      <div class="modal-desc" id="modal-desc"></div>
+      <div class="panel-title">Hoạt động</div>
+      <div class="modal-events" id="modal-events"></div>
+    </div>
+  </div>
+
+  <!-- Settings modal -->
+  <div class="modal-backdrop hidden" id="settings-backdrop">
+    <div class="modal modal-settings">
+      <div class="modal-header">
+        <h2>Settings</h2>
+        <button class="modal-close" id="settings-close">×</button>
+      </div>
+      <div class="panel-title">Tools — LLM models</div>
+      <p class="settings-hint">
+        Bật/tắt model có sẵn. Thêm model mới bằng form bên dưới (BASE_URL + model + api_key).
+      </p>
+      <div class="token-list" id="llm-tool-list"></div>
+      <form class="llm-tool-form" id="llm-tool-form">
+        <input type="text" id="llm-base-url" placeholder="BASE_URL (https://…/v1)" required />
+        <input type="text" id="llm-model" placeholder="Model name (vd: deepseek-v4-flash-free)" required />
+        <input type="password" id="llm-api-key" placeholder="API key" required />
+        <button type="submit" id="llm-tool-add">Thêm model</button>
+      </form>
+
+      <div class="panel-title">Model theo vai trò agent</div>
+      <p class="settings-hint">Chọn tool LLM cho từng vai trò — áp dụng ngay cho agent tương ứng.</p>
+      <div class="agent-models" id="agent-models"></div>
+
+      <div class="panel-title">Figma tokens</div>
+      <p class="settings-hint">
+        Thêm personal access token (<code>figd_…</code>) của từng tài khoản Figma.
+      </p>
+      <div class="token-list" id="token-list"></div>
+      <form class="token-form" id="token-form">
+        <input type="text" id="token-name" placeholder="Tên (vd: account-cty)" required />
+        <input type="password" id="token-value" placeholder="figd_…" required />
+        <button type="submit" id="token-add">Thêm</button>
+      </form>
+
+      <div class="panel-title">Git tokens</div>
+      <p class="settings-hint">
+        Token cho repo private GitHub/GitLab (PAT). Host ví dụ <code>github.com</code> hoặc <code>gitlab.com</code>.
+      </p>
+      <div class="token-list" id="git-token-list"></div>
+      <form class="token-form" id="git-token-form">
+        <input type="text" id="git-token-name" placeholder="Tên (vd: github-main)" required />
+        <input type="text" id="git-token-host" placeholder="Host (github.com)" value="github.com" required />
+        <input type="password" id="git-token-value" placeholder="ghp_… / glpat-…" required />
+        <button type="submit" id="git-token-add">Thêm</button>
+      </form>
+      <div class="settings-msg" id="settings-msg"></div>
+    </div>
+  </div>
+
+  <!-- New project modal -->
+  <div class="modal-backdrop hidden" id="project-backdrop">
+    <div class="modal modal-settings">
+      <div class="modal-header">
+        <h2>New project</h2>
+        <button class="modal-close" id="project-close">×</button>
+      </div>
+      <p class="settings-hint">Tạo project trước, rồi chọn nó — mọi task mới từ Chat sẽ gắn vào project đang chọn.</p>
+      <form class="token-form" id="project-form">
+        <input type="text" id="project-name" placeholder="Tên project (vd: jtshop)" required />
+        <button type="submit" id="project-add">Tạo</button>
+      </form>
+      <div class="settings-msg" id="project-msg"></div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

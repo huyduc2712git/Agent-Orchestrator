@@ -1,0 +1,12 @@
+.env
+workspace/settings.json
+__pycache__/
+*.pyc
+*.db
+workspace/board.db
+workspace/board.db-*
+workspace/artifacts/
+workspace/projects/
+.venv/
+.pytest_cache/
+*.egg-info/
