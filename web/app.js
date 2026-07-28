@@ -7,15 +7,53 @@ const COLUMNS = [
   { key: "ready", label: "Ready to Merge", headClass: "ready", statuses: ["done"] },
 ];
 
-const AGENT_STYLE = {
-  jarvis: { bg: "#1e3a5f", fg: "#60a5fa" },
-  stark: { bg: "#431407", fg: "#fb923c" },
-  banner: { bg: "#2e1065", fg: "#a78bfa" },
-  hawkeye: { bg: "#052e16", fg: "#4ade80" },
-  pepper: { bg: "#500724", fg: "#f472b6" },
-  system: { bg: "#422006", fg: "#fbbf24" },
-  operator: { bg: "#27272a", fg: "#a1a1aa" },
+const AGENT_INFO = {
+  jarvis: { name: "Jarvis", role: "Squad Lead", icon: "🤖", bg: "#1a2233", fg: "#60a5fa", border: "#2c3b59" },
+  coulson: { name: "Coulson", role: "BA Agent", icon: "📋", bg: "#1c212c", fg: "#94a3b8", border: "#2d3545" },
+  stark: { name: "Stark", role: "Frontend Developer", icon: "💻", bg: "#2a1b14", fg: "#fb923c", border: "#472b1d" },
+  banner: { name: "Banner", role: "DevOps Engineer", icon: "⚡", bg: "#211633", fg: "#a78bfa", border: "#392557" },
+  hawkeye: { name: "Hawkeye", role: "Visual QA", icon: "🔍", bg: "#12241a", fg: "#4ade80", border: "#1f402c" },
+  pepper: { name: "Pepper", role: "Summary & QA", icon: "📝", bg: "#2d1624", fg: "#f472b6", border: "#4a243b" },
+  operator: { name: "Operator", role: "Human Reviewer", icon: "👤", bg: "#1f1f23", fg: "#a1a1aa", border: "#333338" },
+  system: { name: "System", role: "System Event", icon: "⚙️", bg: "#261c10", fg: "#fbbf24", border: "#423019" },
 };
+
+const AGENT_STYLE = {
+  jarvis: AGENT_INFO.jarvis,
+  coulson: AGENT_INFO.coulson,
+  stark: AGENT_INFO.stark,
+  banner: AGENT_INFO.banner,
+  hawkeye: AGENT_INFO.hawkeye,
+  pepper: AGENT_INFO.pepper,
+  system: AGENT_INFO.system,
+  operator: AGENT_INFO.operator,
+};
+
+const KIND_ICON = {
+  comment: "💬",
+  status: "↻",
+  system: "⚙",
+};
+
+const AGENT_LABEL = {
+  jarvis: "Jarvis",
+  coulson: "Coulson",
+  pepper: "Pepper",
+  stark: "Stark",
+  banner: "Banner",
+  hawkeye: "Hawkeye",
+  system: "System",
+  operator: "Operator",
+};
+
+function agentEventIcon(agent, kind) {
+  const n = (agent || "system").toLowerCase();
+  const info = AGENT_INFO[n] || { name: agent || "System", role: "", icon: "🤖", bg: "#1a2233", fg: "#60a5fa", border: "#2c3b59" };
+  return `
+    <div class="event-icon-wrap" title="${escapeHtml(info.name)} — ${escapeHtml(info.role)}">
+      <span class="event-icon agent-${escapeHtml(n)}" style="background:${info.bg};color:${info.fg};border:1px solid ${info.border}">${info.icon}</span>
+    </div>`;
+}
 
 const state = {
   tasks: new Map(),
@@ -50,6 +88,19 @@ document.querySelectorAll(".nav-item").forEach((btn) => {
   btn.addEventListener("click", () => switchView(btn.dataset.view));
 });
 
+const toggleSidebarBtn = document.querySelector(".sidebar-toggle-btn");
+if (toggleSidebarBtn) {
+  toggleSidebarBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    document.body.classList.toggle("sidebar-collapsed");
+    const isCollapsed = document.body.classList.contains("sidebar-collapsed");
+    localStorage.setItem("sidebar-collapsed", isCollapsed ? "true" : "false");
+  });
+}
+if (localStorage.getItem("sidebar-collapsed") === "true") {
+  document.body.classList.add("sidebar-collapsed");
+}
+
 function notifyTab(view) {
   if (state.activeView !== view) $(`dot-${view}`)?.classList.remove("hidden");
 }
@@ -77,28 +128,117 @@ function setThinking(on) {
     : '<span class="status-pulse"></span> sẵn sàng';
 }
 
+function formatMarkdownMessage(text) {
+  if (!text) return "";
+  let html = escapeHtml(text);
+  // Bold **text**
+  html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+  // Italic *text*
+  html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
+  // Code `text`
+  html = html.replace(/`(.*?)`/g, '<code class="chat-code">$1</code>');
+  // Line breaks
+  html = html.replace(/\n/g, '<br/>');
+  return html;
+}
+
+function focusChatInput(prefix) {
+  const ta = $("chat-text");
+  if (!ta) return;
+  if (prefix) ta.value = prefix;
+  ta.focus();
+}
+
 function renderChatMessage(m) {
   const box = $("chat-messages");
+  if (!box) return;
   if (m.role === "system") {
+    const timeStr = formatTime(m.created_at) || "";
     const row = document.createElement("div");
-    row.className = "msg-row system";
-    row.innerHTML = `<div class="msg-bubble">${escapeHtml(m.message)}</div>`;
-    box.appendChild(row);
+    row.className = "msg-row system-msg";
+    row.innerHTML = `
+      <span class="avatar avatar-system">⚙️</span>
+      <div class="msg-jarvis-wrapper">
+        <div class="msg-meta-jarvis">
+          <span class="name" style="color: #eab308;">System / Board Patrol</span>
+          ${timeStr ? `<span class="dot">•</span><span class="time">${timeStr}</span>` : ''}
+          <span class="system-badge">System Notification</span>
+        </div>
+        <div class="msg-bubble system-bubble">${formatMarkdownMessage(m.message)}</div>
+      </div>`;
+    const thinkRow = $("thinking-row");
+    if (thinkRow) box.insertBefore(row, thinkRow);
+    else box.appendChild(row);
     box.scrollTop = box.scrollHeight;
     return;
   }
   const isUser = m.role === "user";
   const row = document.createElement("div");
   row.className = `msg-row ${isUser ? "user" : "jarvis"}`;
-  row.innerHTML = `
-    <span class="avatar ${isUser ? "avatar-user" : "avatar-jarvis"}">${isUser ? "B" : "J"}</span>
-    <div>
-      <div class="msg-bubble">${escapeHtml(m.message)}</div>
-      <div class="msg-time">${formatTime(m.created_at)}</div>
-    </div>`;
-  box.appendChild(row);
+  
+  const timeStr = formatTime(m.created_at) || "12:42 PM";
+
+  if (isUser) {
+    row.innerHTML = `
+      <div class="msg-user-wrapper">
+        <div class="msg-meta-user">
+          <span class="time">${timeStr}</span>
+          <span class="dot">•</span>
+          <span class="name">Bạn</span>
+        </div>
+        <div class="msg-bubble user-bubble">${formatMarkdownMessage(m.message)}</div>
+      </div>
+      <span class="avatar avatar-user">👤</span>`;
+  } else {
+    row.innerHTML = `
+      <span class="avatar avatar-jarvis">🎯</span>
+      <div class="msg-jarvis-wrapper">
+        <div class="msg-meta-jarvis">
+          <span class="name">Jarvis</span>
+          <span class="dot">•</span>
+          <span class="time">${timeStr}</span>
+          <span class="model-badge">deepseek/deepseek-v4-flash</span>
+          <span class="worked-badge">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+            Worked • 1 step • 2s ∨
+          </span>
+        </div>
+        <div class="msg-bubble jarvis-bubble">${formatMarkdownMessage(m.message)}</div>
+      </div>`;
+  }
+  const thinkRow = $("thinking-row");
+  if (thinkRow) box.insertBefore(row, thinkRow);
+  else box.appendChild(row);
   box.scrollTop = box.scrollHeight;
   if (!isUser) setThinking(false);
+}
+
+function setThinking(on) {
+  state.thinking = !!on;
+  const box = $("chat-messages");
+  if (!box) return;
+  let thinkRow = $("thinking-row");
+  if (on) {
+    if (!thinkRow) {
+      thinkRow = document.createElement("div");
+      thinkRow.id = "thinking-row";
+      thinkRow.className = "msg-row jarvis thinking";
+      thinkRow.innerHTML = `
+        <span class="avatar avatar-jarvis">🤖</span>
+        <div class="msg-bubble thinking-bubble">
+          <span class="thinking-text">Jarvis đang suy nghĩ...</span>
+          <span class="typing-dots">
+            <span class="dot"></span>
+            <span class="dot"></span>
+            <span class="dot"></span>
+          </span>
+        </div>`;
+    }
+    box.appendChild(thinkRow);
+    box.scrollTop = box.scrollHeight;
+  } else if (thinkRow) {
+    thinkRow.remove();
+  }
 }
 
 function formatTime(iso) {
@@ -135,7 +275,7 @@ async function loadChat() {
   if (!data.messages.length) {
     const w = document.createElement("div");
     w.className = "msg-row jarvis";
-    w.innerHTML = `<span class="avatar avatar-jarvis">J</span><div><div class="msg-bubble">Ask me something!</div></div>`;
+    w.innerHTML = `<span class="avatar avatar-jarvis">🤖</span><div><div class="msg-bubble">Ask me something!</div></div>`;
     $("chat-messages").appendChild(w);
   } else {
     data.messages.forEach(renderChatMessage);
@@ -196,7 +336,16 @@ document.querySelectorAll(".suggestion-chip").forEach((chip) => {
 
 /* ---------- Board cards (bám ảnh mẫu) ---------- */
 
-function pillFor(t) {
+function parseMeta(t) {
+  if (!t || !t.description) return {};
+  if (t.description.startsWith("{")) {
+    try { return JSON.parse(t.description); } catch(e) {}
+  }
+  return {};
+}
+
+function pillFor(t, meta) {
+  if (meta.pill_text) return { cls: meta.pill_cls || "pill-pending", text: meta.pill_text };
   if (t.status === "in_progress") return { cls: "pill-working", text: "Working" };
   if (t.status === "blocked" && t.type === "bug") return { cls: "pill-failed", text: "CI failed" };
   if (t.status === "blocked") return { cls: "pill-changes", text: "Changes requested" };
@@ -207,96 +356,92 @@ function pillFor(t) {
   return { cls: "pill-pending", text: t.status };
 }
 
-function agentBadge(name) {
-  const n = (name || "jarvis").toLowerCase();
-  const s = AGENT_STYLE[n] || AGENT_STYLE.jarvis;
-  return `<span class="agent-badge"><span class="av" style="background:${s.bg};color:${s.fg}">${n[0]}</span>${escapeHtml(n)}</span>`;
+function cardTag(t) {
+  const assigneeName = t.assignee || "stark";
+  const agent = assigneeName.toLowerCase();
+  const info = AGENT_INFO[agent] || { icon: "🤖" };
+  return `<span class="card-agent-tag" title="${escapeHtml(assigneeName)}">${info.icon} ${escapeHtml(assigneeName)}</span>`;
 }
 
-const KIND_ICON = {
-  comment: "💬",
-  status: "↻",
-  system: "⚙",
-};
+function metaRows(t, meta) {
+  if (meta.stacked_prs && Array.isArray(meta.stacked_prs)) {
+    return `<div class="stacked-prs">` + meta.stacked_prs.map(pr => {
+      const ciCls = pr.ci === "Passing" ? "pass" : pr.ci === "Failing" ? "fail" : "dim";
+      const revCls = pr.review === "Approved" ? "pass" : pr.review === "Changes requested" ? "warn" : "dim";
+      const mergeCls = pr.merge === "Mergeable" ? "pass" : "dim";
+      return `
+        <div class="stacked-pr-block">
+          <div class="meta-row"><span class="mk">PR</span><span class="mv">${escapeHtml(pr.pr_num)} · ${escapeHtml(pr.pr_status)}</span></div>
+          <div class="meta-row">
+            <span class="mk">CI</span><span class="mv ${ciCls}">${escapeHtml(pr.ci)}</span>
+            <span class="mk-inline">Review</span><span class="mv ${revCls}">${escapeHtml(pr.review)}</span>
+          </div>
+          <div class="meta-row"><span class="mk">Merge</span><span class="mv ${mergeCls}">${escapeHtml(pr.merge)}</span></div>
+        </div>`;
+    }).join("") + `</div>`;
+  }
 
-const AGENT_LABEL = {
-  jarvis: "Jarvis",
-  pepper: "Pepper",
-  stark: "Stark",
-  banner: "Banner",
-  hawkeye: "Hawkeye",
-  system: "System",
-  operator: "Operator",
-};
+  const pr = meta.pr ? meta.pr : (meta.pr_num ? `${meta.pr_num} · ${meta.pr_status || "open"}` : (t.status === "in_progress" || t.status === "backlog" ? "no PR yet" : `${t.id} · ${t.status === "done" ? "merged" : "open"}`));
+  
+  let ci = meta.ci || (t.status === "done" ? "Passing" : t.status === "blocked" ? "Failing" : "Pending");
+  let ciCls = ci === "Passing" ? "pass" : ci === "Failing" ? "fail" : "dim";
 
-function agentEventIcon(agent, kind) {
-  const n = (agent || "system").toLowerCase();
-  const s = AGENT_STYLE[n] || AGENT_STYLE.jarvis;
-  const label = AGENT_LABEL[n] || agent || "System";
-  const kindIcon = KIND_ICON[kind] || "•";
-  const letter = n === "system" ? "⚙" : (label[0] || "?").toUpperCase();
+  let review = meta.review || (t.status === "done" ? "Approved" : t.status === "blocked" ? "Changes requested" : "None");
+  let revCls = review === "Approved" ? "pass" : review === "Changes requested" ? "warn" : "dim";
+
+  let merge = meta.merge || (t.status === "done" ? "Mergeable" : "Checking");
+  let mergeCls = merge === "Mergeable" ? "pass" : "dim";
+
   return `
-    <div class="event-icon-wrap" title="${escapeHtml(label)}">
-      <span class="event-icon agent-${escapeHtml(n)}" style="background:${s.bg};color:${s.fg}">${letter}</span>
-      <span class="event-kind-icon kind-${escapeHtml(kind)}">${kindIcon}</span>
+    <div class="meta-row"><span class="mk">PR</span><span class="mv">${escapeHtml(pr)}</span></div>
+    <div class="meta-row"><span class="mk">CI</span><span class="mv ${ciCls}">${escapeHtml(ci)}</span><span class="mk-inline">Review</span><span class="mv ${revCls}">${escapeHtml(review)}</span></div>
+    <div class="meta-row"><span class="mk">Merge</span><span class="mv ${mergeCls}">${escapeHtml(merge)}</span></div>`;
+}
+
+function attentionFor(t, meta) {
+  if (!meta.attention_title && t.status !== "blocked" && t.status !== "backlog") return "";
+
+  const title = meta.attention_title || (t.status === "blocked" ? (t.type === "bug" ? "Fix failing CI" : "Address requested changes") : "Waiting to start");
+  
+  let titleCls = "yellow";
+  if (title.includes("failing") || title.includes("CI")) titleCls = "red";
+  else if (title.includes("Draft")) titleCls = "dim";
+
+  const sub = meta.attention_sub ? `<div class="attention-sub">${escapeHtml(meta.attention_sub)}</div>` : "";
+  const link = meta.attention_link ? `<a class="attention-link" href="#">${escapeHtml(meta.attention_link)}</a>` : "";
+
+  return `
+    <div class="task-card-attention">
+      <div class="attention-label">NEEDS ATTENTION</div>
+      <div class="attention-content">
+        <span class="attention-title ${titleCls}">${escapeHtml(title)}</span>
+        ${link}
+      </div>
+      ${sub}
     </div>`;
-}
-
-function metaRows(t) {
-  const pr = t.status === "in_progress" || t.status === "backlog"
-    ? "no PR yet"
-    : `${t.id} · ${t.status === "done" ? "merged" : "open"}`;
-
-  let ci = "—", ciCls = "";
-  if (t.status === "done") { ci = "Passing"; ciCls = "pass"; }
-  else if (t.status === "blocked") { ci = "Failing"; ciCls = "fail"; }
-  else if (t.status === "testing" || t.status === "review") { ci = "Pending"; ciCls = "warn"; }
-
-  let review = "None";
-  if (t.status === "review") review = "Pending";
-  else if (t.status === "done") review = "Approved";
-  else if (t.status === "blocked") review = "Changes requested";
-
-  let merge = "—";
-  if (t.status === "done") merge = "Mergeable";
-  else if (t.status === "review" && t.review_type === "operator") merge = "Checking";
-
-  return `
-    <div class="meta-row"><span class="mk">PR</span><span class="mv">${pr}</span></div>
-    <div class="meta-row"><span class="mk">CI</span><span class="mv ${ciCls}">${ci}</span></div>
-    <div class="meta-row"><span class="mk">Review</span><span class="mv ${review === "Approved" ? "pass" : review === "Changes requested" ? "warn" : ""}">${review}</span></div>
-    <div class="meta-row"><span class="mk">Merge</span><span class="mv ${merge === "Mergeable" ? "pass" : ""}">${merge}</span></div>`;
-}
-
-function attentionFor(t) {
-  if (t.status !== "blocked" && t.status !== "backlog") return "";
-  const action = t.status === "blocked"
-    ? (t.type === "bug" ? "Fix failing CI" : "Address requested changes")
-  : "Waiting to start";
-  return `<div class="task-card-attention">
-    <div class="attention-label">NEEDS ATTENTION</div>
-    <div class="attention-text">${action}</div>
-  </div>`;
 }
 
 function renderCard(t) {
   const card = document.createElement("div");
   card.className = "task-card";
   card.onclick = () => openModal(t.id);
-  const pill = pillFor(t);
-  const path = t.project_dir
+  const meta = parseMeta(t);
+  const pill = pillFor(t, meta);
+  const path = meta.branch || (t.project_dir
     ? t.project_dir.replace(/^.*[\\/]projects[\\/]/, "demo/")
-    : `demo/${t.project}`;
+    : `demo/${t.project}`);
+  const elapsed = taskElapsed(t);
+  const timeBadge = elapsed ? `<span class="task-card-time" title="Thời gian tổng">⏱ ${elapsed}</span>` : "";
   card.innerHTML = `
-    <span class="task-card-time" title="Thời gian tổng">${taskElapsed(t)}</span>
     <div class="task-card-head">
       <span class="pill ${pill.cls}"><span class="pill-dot"></span>${pill.text}</span>
-      ${agentBadge(t.assignee)}
+      ${cardTag(t)}
     </div>
     <div class="task-card-title">${escapeHtml(t.title)}</div>
     <div class="task-card-path">${escapeHtml(path)}</div>
-    <div class="task-card-meta">${metaRows(t)}</div>
-    ${attentionFor(t)}`;
+    <div class="task-card-meta">${metaRows(t, meta)}</div>
+    ${attentionFor(t, meta)}
+    ${timeBadge}`;
   return card;
 }
 
@@ -310,7 +455,7 @@ function renderBoard() {
 
   for (const col of COLUMNS) {
     const colEl = document.createElement("div");
-    colEl.className = "kanban-col";
+    colEl.className = `kanban-col col-${col.key}`;
     const tasks = parents.filter((t) => col.statuses.includes(t.status));
     colEl.innerHTML = `
       <div class="col-head ${col.headClass}">
@@ -332,12 +477,6 @@ function renderBoard() {
   }
   updateFooterProject();
   renderSidebar();
-  const sub = $("board-subtitle");
-  if (sub) {
-    sub.textContent = state.activeProject
-      ? `Project: ${state.activeProject} — task mới từ Chat sẽ gắn vào đây`
-      : "Chọn hoặc tạo project ở sidebar trước";
-  }
 }
 
 function updateFooterProject() {
@@ -364,13 +503,14 @@ function renderSidebar() {
   }
 
   for (const p of [...state.projects].sort((a, b) => a.slug.localeCompare(b.slug))) {
+    const isExpanded = state.activeProject === p.slug || state.expandedProjects?.has(p.slug);
     const group = document.createElement("div");
     group.className = "project-group" + (state.activeProject === p.slug ? " active" : "");
 
     const head = document.createElement("div");
     head.className = "project-name" + (state.activeProject === p.slug ? " selected" : "");
     head.innerHTML = `
-      <span class="chevron">${state.activeProject === p.slug ? "▼" : "▸"}</span>
+      <span class="chevron">▼</span>
       <span class="project-label">${escapeHtml(p.name || p.slug)}</span>
       <button class="project-remove" title="Xóa project" type="button">×</button>`;
     head.querySelector(".project-label").onclick = (e) => { e.stopPropagation(); selectProject(p.slug); };
@@ -381,24 +521,29 @@ function renderSidebar() {
     };
     group.appendChild(head);
 
-    if (state.activeProject === p.slug) {
-      const list = document.createElement("div");
-      list.className = "project-tasks";
-      const parents = [...state.tasks.values()].filter((t) => !t.parent_id && t.project === p.slug);
-      if (!parents.length) {
-        list.innerHTML = '<div class="sidebar-hint" style="padding-left:20px">Chưa có task</div>';
-      }
+    const list = document.createElement("div");
+    list.className = "project-tasks";
+    const parents = [...state.tasks.values()].filter((t) => !t.parent_id && t.project === p.slug);
+    if (!parents.length) {
+      list.innerHTML = '<div class="sidebar-hint" style="padding-left:20px">Chưa có task</div>';
+    } else {
       for (const t of parents) {
         const item = document.createElement("div");
         item.className = "sidebar-task" + (state.openTaskId === t.id ? " active" : "");
-        const colors = { in_progress: "#f97316", blocked: "#ef4444", backlog: "#71717a",
-          testing: "#eab308", review: "#a1a1aa", done: "#22c55e" };
-        item.innerHTML = `<span class="dot" style="background:${colors[t.status] || "#71717a"}"></span><span class="label">${escapeHtml(t.title)}</span>`;
-        item.onclick = (e) => { e.stopPropagation(); switchView("board"); openModal(t.id); };
+        
+        let dotColor = "#9ba1aa";
+        if (t.status === "in_progress") dotColor = "#b1763d";
+        else if (t.status === "blocked" && t.type === "bug") dotColor = "#ef4444";
+        else if (t.status === "blocked") dotColor = "#e8c14a";
+        else if (t.status === "review" || t.status === "testing") dotColor = "#9ba1aa";
+        else if (t.status === "done") dotColor = "#74b98a";
+
+        item.innerHTML = `<span class="dot" style="background:${dotColor}"></span><span class="label">${escapeHtml(t.title)}</span>`;
+        item.onclick = (e) => { e.stopPropagation(); selectProject(p.slug); openModal(t.id); };
         list.appendChild(item);
       }
-      group.appendChild(list);
     }
+    group.appendChild(list);
     box.appendChild(group);
   }
 }
@@ -525,6 +670,10 @@ async function openModal(taskId) {
   const res = await fetch(`/api/tasks/${taskId}`);
   const data = await res.json();
   const t = data.task;
+  if (!t) {
+    console.error("Task not found:", taskId);
+    return;
+  }
 
   $("modal-task-id").textContent = t.id;
   $("modal-status").textContent = STATUS_LABEL[t.status] || t.status;
@@ -568,40 +717,111 @@ async function openModal(taskId) {
 }
 
 function formatEventMessage(msg) {
-  let s = escapeHtml(msg || "");
-  // Artifact screenshot URLs -> inline images
+  if (!msg) return "";
+  let s = escapeHtml(msg);
+  
+  // Artifact screenshot URLs -> inline images with nice frame
   s = s.replace(/(view_url|diff_view_url):\s*(https?:\/\/[^\s<]+)/gi, (_, _k, url) =>
-    `<div class="qa-shot"><a href="${url}" target="_blank">${url}</a><img src="${url}" alt="screenshot" loading="lazy"/></div>`);
+    `<div class="qa-shot"><a href="${url}" target="_blank" class="qa-shot-link">📸 View Screenshot</a><img src="${url}" alt="screenshot" loading="lazy"/></div>`);
   s = s.replace(/(https?:\/\/[^\s<]+\/artifacts\/[^\s<]+\.png)/gi, (url) =>
-    `<div class="qa-shot"><a href="${url}" target="_blank">${url}</a><img src="${url}" alt="screenshot" loading="lazy"/></div>`);
-  // Basic markdown headers
-  s = s.replace(/^## (.+)$/gm, "<h4>$1</h4>");
-  s = s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-  // Markdown table rows (simple)
-  s = s.replace(/^\| (.+) \|$/gm, (row) => {
-    if (row.includes("---")) return "";
-    const cells = row.split("|").filter(Boolean).map((c) => c.trim());
-    return `<div class="qa-table-row">${cells.map((c) => `<span>${c}</span>`).join("")}</div>`;
-  });
-  return s.replace(/\n/g, "<br>");
+    `<div class="qa-shot"><a href="${url}" target="_blank" class="qa-shot-link">📸 View Screenshot</a><img src="${url}" alt="screenshot" loading="lazy"/></div>`);
+
+  // Markdown Headers
+  s = s.replace(/^### (.+)$/gm, '<h4 class="event-h3">$1</h4>');
+  s = s.replace(/^## (.+)$/gm, '<h3 class="event-h2">$1</h3>');
+  s = s.replace(/^# (.+)$/gm, '<h2 class="event-h1">$1</h2>');
+
+  // Bold text
+  s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+
+  // Inline code block `file.ext`
+  s = s.replace(/`([^`]+)`/g, '<code class="event-inline-code">$1</code>');
+
+  // Markdown status badges (PASS / FAIL)
+  s = s.replace(/✅/g, '<span class="icon-pass">✅</span>');
+  s = s.replace(/❌/g, '<span class="icon-fail">❌</span>');
+  s = s.replace(/\bPASS\b/g, '<span class="badge-pass">PASS</span>');
+  s = s.replace(/\bFAIL\b/g, '<span class="badge-fail">FAIL</span>');
+
+  // Parse markdown tables properly into HTML <table>
+  const lines = s.split("\n");
+  let inTable = false;
+  let tableRows = [];
+  let outLines = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (line.startsWith("|") && line.endsWith("|")) {
+      if (line.includes("---")) continue; // Skip separator line
+      const cells = line.split("|").filter((_, idx, arr) => idx > 0 && idx < arr.length - 1).map(c => c.trim());
+      tableRows.push(cells);
+    } else {
+      if (tableRows.length > 0) {
+        let tHtml = '<table class="qa-table"><thead><tr>';
+        const headers = tableRows[0];
+        tHtml += headers.map(h => `<th>${h}</th>`).join('') + '</tr></thead><tbody>';
+        for (let r = 1; r < tableRows.length; r++) {
+          tHtml += '<tr>' + tableRows[r].map(c => `<td>${c}</td>`).join('') + '</tr>';
+        }
+        tHtml += '</tbody></table>';
+        outLines.push(tHtml);
+        tableRows = [];
+      }
+      if (line) outLines.push(line);
+    }
+  }
+  if (tableRows.length > 0) {
+    let tHtml = '<table class="qa-table"><thead><tr>';
+    const headers = tableRows[0];
+    tHtml += headers.map(h => `<th>${h}</th>`).join('') + '</tr></thead><tbody>';
+    for (let r = 1; r < tableRows.length; r++) {
+      tHtml += '<tr>' + tableRows[r].map(c => `<td>${c}</td>`).join('') + '</tr>';
+    }
+    tHtml += '</tbody></table>';
+    outLines.push(tHtml);
+  }
+
+  return outLines.join("<br>");
 }
+
+const AGENT_ROLE_TITLE = {
+  jarvis: "Jarvis (Squad Lead)",
+  pepper: "Pepper (Summary & QA)",
+  stark: "Stark (Senior Coder)",
+  banner: "Banner (UI Developer)",
+  hawkeye: "Hawkeye (Visual QA)",
+  system: "System",
+  operator: "Operator",
+};
 
 function renderEvent(e) {
   const agent = (e.agent || "system").toLowerCase();
-  const label = AGENT_LABEL[agent] || e.agent || "System";
+  const label = AGENT_ROLE_TITLE[agent] || AGENT_LABEL[agent] || e.agent || "System";
   const div = document.createElement("div");
   div.className = `event kind-${e.kind} agent-event-${agent}`;
+
+  const formattedTime = new Date(e.created_at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+  const formattedBody = formatEventMessage(e.message);
+
+  const isStructured = e.message && (
+    e.message.includes("|") || 
+    e.message.includes("##") || 
+    e.message.includes("http") || 
+    agent === "pepper"
+  );
+
+  const bodyContent = isStructured
+    ? `<div class="event-content-box">${formattedBody}</div>`
+    : `<div class="event-body-text">${formattedBody}</div>`;
+
   div.innerHTML = `
-    <div class="event-row">
-      ${agentEventIcon(e.agent, e.kind)}
-      <div class="event-main">
-        <div class="event-head">
-          <span class="event-agent-name">${escapeHtml(label)}</span>
-          <span class="event-kind-label">${escapeHtml(e.kind)}</span>
-          <span class="event-time">${new Date(e.created_at).toLocaleTimeString("vi-VN")}</span>
-        </div>
-        <div class="event-body">${formatEventMessage(e.message)}</div>
+    <div class="event-card">
+      <div class="event-card-header">
+        ${agentEventIcon(e.agent, e.kind)}
+        <span class="event-agent-name">${escapeHtml(label)}</span>
+        <span class="event-time">${formattedTime}</span>
       </div>
+      ${bodyContent}
     </div>`;
   return div;
 }
@@ -619,19 +839,33 @@ async function loadSettings() {
   const roles = data.role_models || {};
   const roleLabels = data.role_labels || {};
 
-  // LLM tools list — chỉ hiện model name + toggle
+  // LLM tools list — hiện model + base_url + default badge
+  const DEFAULT_MODELS = ["deepseek-v4-flash-free", "nemotron-3-ultra-free", "mimo-v2.5-free"];
   const toolList = $("llm-tool-list");
   toolList.innerHTML = tools.length
-    ? tools.map((t) => `
+    ? tools.map((t) => {
+        const isDef = t.is_default || DEFAULT_MODELS.includes(t.model);
+        return `
       <div class="llm-tool-row ${t.enabled ? "" : "off"}">
-        <code class="llm-model-name">${escapeHtml(t.model)}</code>
-        <label class="toggle" title="${t.enabled ? "Tắt" : "Bật"}">
-          <input type="checkbox" data-id="${escapeHtml(t.id)}" ${t.enabled ? "checked" : ""} />
-          <span class="toggle-track"></span>
-        </label>
-      </div>`).join("")
-    : '<div class="settings-hint">(chưa có LLM tool — thêm bên dưới hoặc dùng từ .env)</div>';
-  toolList.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+        <div class="llm-model-info">
+          <div class="llm-model-name-row">
+            <code class="llm-model-name">${escapeHtml(t.model)}</code>
+            ${isDef ? '<span class="default-badge">Hệ thống</span>' : ''}
+          </div>
+          <div class="llm-model-url">${escapeHtml(t.base_url || "https://opencode.ai/zen/v1")}</div>
+        </div>
+        <div class="llm-tool-actions">
+          <label class="toggle" title="${isDef ? "Model mặc định của hệ thống luôn ở trạng thái bật" : (t.enabled ? "Tắt model" : "Bật model")}">
+            <input type="checkbox" data-id="${escapeHtml(t.id)}" ${t.enabled ? "checked" : ""} ${isDef ? "disabled" : ""} />
+            <span class="toggle-track"></span>
+          </label>
+          ${!isDef ? `<button class="btn-delete-llm-tool" data-id="${escapeHtml(t.id)}" title="Xóa model">Xóa</button>` : ''}
+        </div>
+      </div>`;
+      }).join("")
+    : '<div class="settings-hint">(chưa có LLM tool — thêm bên dưới)</div>';
+
+  toolList.querySelectorAll('input[type="checkbox"]:not([disabled])').forEach((cb) => {
     cb.onchange = async () => {
       const res = await fetch(`/api/settings/llm-tools/${encodeURIComponent(cb.dataset.id)}`, {
         method: "PATCH",
@@ -649,6 +883,23 @@ async function loadSettings() {
     };
   });
 
+  toolList.querySelectorAll(".btn-delete-llm-tool").forEach((btn) => {
+    btn.onclick = async () => {
+      if (!confirm("Bạn có chắc muốn xóa model này không?")) return;
+      const res = await fetch(`/api/settings/llm-tools/${encodeURIComponent(btn.dataset.id)}`, {
+        method: "DELETE",
+      });
+      const d = await res.json();
+      if (!res.ok) {
+        settingsMsg(d.error || "Lỗi khi xóa", false);
+        return;
+      }
+      settingsMsg("Đã xóa model thành công", true);
+      loadSettings();
+    };
+  });
+
+  const hasActiveTasks = !!data.has_active_tasks;
   const enabledTools = tools.filter((t) => t.enabled);
   const toolOptions = enabledTools.map((t) =>
     `<option value="${escapeHtml(t.id)}">${escapeHtml(t.model)}</option>`
@@ -656,17 +907,23 @@ async function loadSettings() {
 
   // Role pickers (planner/coder/critic/summary) + agent mapping
   const roleOrder = ["planner", "coder", "critic", "summary"];
-  $("agent-models").innerHTML = roleOrder.map((role) => {
+  const activeWarningHtml = hasActiveTasks
+    ? `<div class="active-tasks-lock-banner">
+        🔒 <strong>Đang có Task đang thực thi:</strong> Để tránh xung đột tiến trình, vui lòng chờ các Agent hoàn thành công việc trước khi thay đổi cấu hình Model.
+       </div>`
+    : '';
+
+  $("agent-models").innerHTML = activeWarningHtml + roleOrder.map((role) => {
     const label = roleLabels[role] || role;
     const agents = (data.agents || []).filter((a) => a.role === role).map((a) => a.display).join(", ");
     const selected = roles[role] || "";
     return `
-      <div class="model-row">
+      <div class="model-row ${hasActiveTasks ? "locked" : ""}">
         <div class="model-row-main">
           <div class="model-row-name">${escapeHtml(label)}</div>
           <div class="model-row-role">${escapeHtml(agents || role)}</div>
         </div>
-        <select class="model-select" data-role="${escapeHtml(role)}">
+        <select class="model-select" data-role="${escapeHtml(role)}" ${hasActiveTasks ? "disabled title='Đang có task đang chạy — không thể đổi model'" : ""}>
           ${enabledTools.length ? toolOptions : '<option value="">(không có model đang bật)</option>'}
         </select>
       </div>`;
@@ -712,6 +969,23 @@ async function loadSettings() {
   }
 }
 function settingsMsg(text, ok) { const el = $("settings-msg"); el.textContent = text; el.className = "settings-msg " + (ok ? "ok" : "err"); }
+document.querySelectorAll(".settings-tab-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".settings-tab-btn").forEach((b) => b.classList.remove("active"));
+    document.querySelectorAll(".settings-tab-content").forEach((c) => {
+      c.classList.add("hidden");
+      c.classList.remove("active");
+    });
+    btn.classList.add("active");
+    const targetId = btn.dataset.tab;
+    const target = $(targetId);
+    if (target) {
+      target.classList.remove("hidden");
+      target.classList.add("active");
+    }
+  });
+});
+
 $("sidebar-settings-btn").onclick = openSettings;
 $("settings-close").onclick = () => $("settings-backdrop").classList.add("hidden");
 $("settings-backdrop").addEventListener("click", (e) => { if (e.target === $("settings-backdrop")) $("settings-close").onclick(); });

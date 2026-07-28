@@ -192,15 +192,24 @@ def ensure_project_from_tasks(task_projects: list[tuple[str, str]]) -> None:
 
 # ---------- LLM tools (multi-provider) ----------
 
+DEFAULT_SYSTEM_MODELS = {"deepseek-v4-flash-free", "nemotron-3-ultra-free", "mimo-v2.5-free"}
+
+
 def _seed_llm_from_env(data: dict) -> dict:
     """Lần đầu: seed llm_tools + role_models từ .env nếu chưa có."""
     tools = data.get("llm_tools") or []
     roles = data.get("role_models") or {}
 
-    # Migrate: mọi tool cũ chưa có enabled → bật
     migrated = False
     for t in tools:
-        if "enabled" not in t:
+        is_def = (t.get("model") in DEFAULT_SYSTEM_MODELS) or t.get("is_default", False)
+        if t.get("is_default") != is_def:
+            t["is_default"] = is_def
+            migrated = True
+        if is_def and not t.get("enabled", True):
+            t["enabled"] = True
+            migrated = True
+        elif "enabled" not in t:
             t["enabled"] = True
             migrated = True
 
@@ -223,6 +232,7 @@ def _seed_llm_from_env(data: dict) -> dict:
         while tid in existing_ids:
             tid = f"{base}-{n}"
             n += 1
+        is_def = model in DEFAULT_SYSTEM_MODELS
         tools.append({
             "id": tid,
             "name": model,
@@ -230,6 +240,7 @@ def _seed_llm_from_env(data: dict) -> dict:
             "model": model,
             "api_key": config.LLM_API_KEY,
             "enabled": True,
+            "is_default": is_def,
         })
         by_model[model] = tid
         changed = True
@@ -294,6 +305,7 @@ def add_llm_tool(name: str, base_url: str, model: str, api_key: str, tool_id: st
         tid = f"{base}-{n}"
         n += 1
 
+    is_def = model.strip() in DEFAULT_SYSTEM_MODELS
     entry = {
         "id": tid,
         "name": (name or model).strip(),
@@ -301,6 +313,7 @@ def add_llm_tool(name: str, base_url: str, model: str, api_key: str, tool_id: st
         "model": model.strip(),
         "api_key": api_key.strip(),
         "enabled": True,
+        "is_default": is_def,
     }
     tools = [t for t in data.get("llm_tools", []) if t["id"] != tid]
     tools.append(entry)
@@ -314,12 +327,15 @@ def add_llm_tool(name: str, base_url: str, model: str, api_key: str, tool_id: st
 
 
 def set_llm_tool_enabled(tool_id: str, enabled: bool) -> dict | None:
-    """Bật/tắt tool. Không xóa. Nếu tắt mà role đang dùng → chuyển sang tool khác còn bật."""
+    """Bật/tắt tool. Không cho tắt model mặc định hệ thống."""
     data = _seed_llm_from_env(load())
     tools = data.get("llm_tools", [])
     tool = next((t for t in tools if t.get("id") == tool_id), None)
     if not tool:
         return None
+    is_def = tool.get("model") in DEFAULT_SYSTEM_MODELS or tool.get("is_default", False)
+    if is_def and not enabled:
+        raise ValueError(f"Model mặc định {tool['model']} luôn ở trạng thái bật")
     tool["enabled"] = bool(enabled)
     if not enabled:
         fallback = next((t["id"] for t in tools if t.get("enabled", True) and t["id"] != tool_id), "")
@@ -330,6 +346,28 @@ def set_llm_tool_enabled(tool_id: str, enabled: bool) -> dict | None:
         data["role_models"] = roles
     save(data)
     return tool
+
+
+def delete_llm_tool(tool_id: str) -> bool:
+    """Xóa user-added tool. Không thể xóa model mặc định."""
+    data = _seed_llm_from_env(load())
+    tools = data.get("llm_tools", [])
+    tool = next((t for t in tools if t.get("id") == tool_id), None)
+    if not tool:
+        return False
+    is_def = tool.get("model") in DEFAULT_SYSTEM_MODELS or tool.get("is_default", False)
+    if is_def:
+        raise ValueError(f"Không thể xóa model mặc định hệ thống ({tool['model']})")
+    
+    data["llm_tools"] = [t for t in tools if t["id"] != tool_id]
+    fallback = next((t["id"] for t in data["llm_tools"] if t.get("enabled", True)), "")
+    roles = data.get("role_models", {})
+    for r in ROLE_KEYS:
+        if roles.get(r) == tool_id:
+            roles[r] = fallback
+    data["role_models"] = roles
+    save(data)
+    return True
 
 
 def set_role_model(role: str, tool_id: str) -> None:

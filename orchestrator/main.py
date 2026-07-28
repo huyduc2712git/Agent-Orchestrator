@@ -22,13 +22,17 @@ logging.basicConfig(
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
 )
 
-app = FastAPI(title="AI Orchestrator")
+from contextlib import asynccontextmanager
 
 
-@app.on_event("startup")
-async def startup() -> None:
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     asyncio.create_task(scheduler_loop())
     asyncio.create_task(patrol_loop())
+    yield
+
+
+app = FastAPI(title="AI Orchestrator", lifespan=lifespan)
 
 
 # ---------- Chat ----------
@@ -205,13 +209,19 @@ def _mask(token: str) -> str:
 @app.get("/api/settings")
 async def get_settings():
     from .agents.registry import roster_models
+    from .board import store
+
+    active_tasks = store.list_tasks(status=["in_progress"])
+    has_active_tasks = len(active_tasks) > 0
 
     tools = []
     for t in settings.llm_tools():
         tools.append({
             "id": t["id"],
             "model": t["model"],
+            "base_url": t.get("base_url", ""),
             "enabled": t.get("enabled", True),
+            "is_default": t.get("is_default", False) or (t.get("model") in settings.DEFAULT_SYSTEM_MODELS),
         })
     return {
         "figma_tokens": [
@@ -230,6 +240,7 @@ async def get_settings():
         "role_models": settings.role_models(),
         "role_labels": settings.ROLE_LABELS,
         "agents": roster_models(),
+        "has_active_tasks": has_active_tasks,
     }
 
 
@@ -254,18 +265,27 @@ class RoleModelIn(BaseModel):
 @app.post("/api/settings/llm-tools")
 async def add_llm_tool(body: LlmToolIn):
     base_url = body.base_url.strip().rstrip("/")
+    # Tự động loại bỏ trùng lặp /chat/completions hoặc /chat nếu người dùng dán nguyên URL đầy đủ
+    if base_url.endswith("/chat/completions"):
+        base_url = base_url[:-17].rstrip("/")
+    elif base_url.endswith("/chat"):
+        base_url = base_url[:-5].rstrip("/")
+
     model = body.model.strip()
     api_key = body.api_key.strip()
     name = (body.name or model).strip()
     if not base_url or not model or not api_key:
         return JSONResponse({"error": "cần đủ base_url, model, api_key"}, status_code=400)
+    
     # Smoke test endpoint
     import httpx
     try:
+        # Bảo vệ header khỏi kí tự unicode không hợp lệ
+        clean_key = api_key.encode("latin-1", "ignore").decode("latin-1")
         resp = await asyncio.to_thread(
             lambda: httpx.post(
                 f"{base_url}/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}"},
+                headers={"Authorization": f"Bearer {clean_key}"},
                 json={
                     "model": model,
                     "messages": [{"role": "user", "content": "Reply OK"}],
@@ -277,13 +297,16 @@ async def add_llm_tool(body: LlmToolIn):
         )
     except httpx.HTTPError as e:
         return JSONResponse({"error": f"không gọi được endpoint: {e}"}, status_code=502)
+    except Exception as e:
+        return JSONResponse({"error": f"lỗi gửi yêu cầu test: {e}"}, status_code=400)
+
     if resp.status_code >= 400:
         return JSONResponse(
             {"error": f"endpoint/model lỗi HTTP {resp.status_code}: {resp.text[:200]}"},
             status_code=400,
         )
     entry = settings.add_llm_tool(name, base_url, model, api_key, tool_id=body.id)
-    return {"ok": True, "tool": {"id": entry["id"], "model": entry["model"], "enabled": True}}
+    return {"ok": True, "tool": {"id": entry["id"], "model": entry["model"], "base_url": entry["base_url"], "enabled": True, "is_default": entry.get("is_default", False)}}
 
 
 class LlmToggleIn(BaseModel):
@@ -292,18 +315,39 @@ class LlmToggleIn(BaseModel):
 
 @app.patch("/api/settings/llm-tools/{tool_id}")
 async def toggle_llm_tool(tool_id: str, body: LlmToggleIn):
-    tool = settings.set_llm_tool_enabled(tool_id, body.enabled)
+    try:
+        tool = settings.set_llm_tool_enabled(tool_id, body.enabled)
+    except ValueError as err:
+        return JSONResponse({"error": str(err)}, status_code=400)
     if not tool:
         return JSONResponse({"error": "không tìm thấy tool"}, status_code=404)
     return {
         "ok": True,
-        "tool": {"id": tool["id"], "model": tool["model"], "enabled": tool.get("enabled", True)},
+        "tool": {"id": tool["id"], "model": tool["model"], "base_url": tool.get("base_url", ""), "enabled": tool.get("enabled", True), "is_default": tool.get("is_default", False)},
         "role_models": settings.role_models(),
     }
 
 
+@app.delete("/api/settings/llm-tools/{tool_id}")
+async def delete_llm_tool(tool_id: str):
+    try:
+        ok = settings.delete_llm_tool(tool_id)
+    except ValueError as err:
+        return JSONResponse({"error": str(err)}, status_code=400)
+    if not ok:
+        return JSONResponse({"error": "không tìm thấy tool"}, status_code=404)
+    return {"ok": True, "role_models": settings.role_models()}
+
+
 @app.put("/api/settings/role-models")
 async def update_role_model(body: RoleModelIn):
+    from .board import store
+    active_tasks = store.list_tasks(status=["in_progress"])
+    if active_tasks:
+        return JSONResponse(
+            {"error": "Không thể thay đổi Model khi Agent đang thực thi Task! Hãy chờ Task hoàn thành."},
+            status_code=400,
+        )
     try:
         settings.set_role_model(body.role.strip(), body.tool_id.strip())
     except ValueError as e:
