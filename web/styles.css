@@ -517,6 +517,24 @@ body.sidebar-collapsed .sidebar-settings {
   margin-bottom: 8px;
   gap: 8px;
 }
+.task-card-head-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.task-card-time {
+  font-family: "SF Mono", Consolas, monospace;
+  font-size: 0.72rem;
+  color: #a1a1aa;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
 .pill {
   display: inline-flex;
   align-items: center;
@@ -990,21 +1008,18 @@ body.sidebar-collapsed .sidebar-settings {
   color: var(--text-dim); margin-bottom: 10px;
 }
 .task-card-time {
-  position: absolute;
-  bottom: 8px;
-  right: 10px;
-  font-size: 0.68rem;
+  position: static;
+  font-size: 0.7rem;
   font-family: "SF Mono", Consolas, monospace;
   font-weight: 500;
   color: #a1a1aa;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid #27272a;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 4px;
   padding: 1px 6px;
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  pointer-events: none;
 }
 
 .modal-events { display: flex; flex-direction: column; gap: 12px; }
@@ -1264,6 +1279,11 @@ body.sidebar-collapsed .sidebar-settings {
 .llm-tool-form button:hover, .token-form button:hover {
   background: #2563eb;
 }
+#projects-root-reset {
+  background: #1e293b;
+  color: #94a3b8;
+  border: 1px solid #334155;
+}
 
 .llm-tool-row, .token-row {
   display: flex; align-items: center; gap: 12px;
@@ -1408,4 +1428,144 @@ body.sidebar-collapsed .sidebar-settings {
   .brand-text, .sidebar-section-head span, .nav-item span:not(.nav-dot),
   .sidebar-task .label, .sidebar-settings span, .conn { display: none; }
   .sidebar-brand { justify-content: center; padding: 0 8px 16px; }
+}
+
+/* ========== SUBTASKS BREAKDOWN DISPLAY ========== */
+.task-card-subtasks {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.08);
+}
+.subtasks-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--text-dim);
+  letter-spacing: 0.05em;
+  margin-bottom: 6px;
+}
+.subtasks-pct {
+  color: var(--blue);
+  font-family: "SF Mono", Consolas, monospace;
+}
+.subtasks-progress {
+  width: 100%;
+  height: 5px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+.subtasks-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #60a5fa, #3b82f6);
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.subtasks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.subtask-card-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  font-size: 0.74rem;
+}
+.subtask-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.subtask-card-row.sub-backlog .subtask-dot { background: #94a3b8; }
+.subtask-card-row.sub-working .subtask-dot { background: #f59e0b; box-shadow: 0 0 6px rgba(245, 158, 11, 0.8); }
+.subtask-card-row.sub-testing .subtask-dot { background: #38bdf8; box-shadow: 0 0 6px rgba(56, 189, 248, 0.8); }
+.subtask-card-row.sub-review .subtask-dot { background: #a78bfa; box-shadow: 0 0 6px rgba(167, 139, 250, 0.8); }
+.subtask-card-row.sub-done .subtask-dot { background: #34d399; box-shadow: 0 0 6px rgba(52, 211, 153, 0.8); }
+
+.subtask-step {
+  flex-shrink: 0;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: #60a5fa;
+  font-family: "SF Mono", Consolas, monospace;
+  min-width: 1.4rem;
+}
+.subtask-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #e4e4e7;
+  font-weight: 500;
+}
+.subtask-agent-tag {
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  font-family: "SF Mono", Consolas, monospace;
+}
+.subtask-badge {
+  font-size: 0.68rem;
+  font-weight: 650;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.sub-backlog .subtask-badge { color: #94a3b8; background: rgba(148, 163, 184, 0.1); }
+.sub-working .subtask-badge { color: #f59e0b; background: rgba(245, 158, 11, 0.12); }
+.sub-testing .subtask-badge { color: #38bdf8; background: rgba(56, 189, 248, 0.12); }
+.sub-review .subtask-badge { color: #a78bfa; background: rgba(167, 139, 250, 0.12); }
+.sub-done .subtask-badge { color: #34d399; background: rgba(52, 211, 153, 0.12); }
+
+.subtask-card-row.is-bug,
+.modal-subtask-card.is-bug {
+  border-color: rgba(239, 68, 68, 0.25);
+  background: rgba(239, 68, 68, 0.06);
+}
+.task-card-bugs .subtasks-label {
+  color: #f87171;
+}
+.modal-subtask-card.is-bug .subtask-id {
+  color: #f87171;
+}
+
+/* Modal subtasks */
+.modal-subtasks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  margin-bottom: 16px;
+}
+.modal-subtask-card {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.modal-subtask-card .subtask-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.modal-subtask-card .subtask-id {
+  font-family: "SF Mono", Consolas, monospace;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+.modal-subtask-card .subtask-item-title {
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--text);
 }

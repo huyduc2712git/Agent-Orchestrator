@@ -11,12 +11,13 @@ from dataclasses import dataclass
 from .models import Task
 
 ALLOWED = {
-    "backlog": {"in_progress", "blocked", "archived"},
-    "in_progress": {"testing", "blocked", "backlog"},
-    "blocked": {"backlog", "in_progress"},
-    "testing": {"review", "done", "in_progress", "blocked"},
-    "review": {"done", "testing"},
+    "backlog": {"in_progress", "blocked", "archived", "failed"},
+    "in_progress": {"testing", "blocked", "backlog", "failed"},
+    "blocked": {"backlog", "in_progress", "failed"},
+    "testing": {"review", "done", "in_progress", "blocked", "failed"},
+    "review": {"done", "testing", "failed"},
     "done": {"archived", "in_progress"},
+    "failed": {"backlog", "archived"},
     "archived": set(),
 }
 

@@ -63,19 +63,36 @@ Phân tích và trả về DUY NHẤT một JSON object (không giải thích th
 Active Project (nếu có): {active_project}
 — Nếu Active Project khác rỗng: LUÔN dùng đúng slug đó, KHÔNG tạo project mới. Task mới nằm trong project đang chọn.
 — Chỉ đề xuất project mới khi Active Project rỗng VÀ người dùng yêu cầu tạo project mới rõ ràng.
+— project_dir: nếu user ghi đường dẫn tuyệt đối (vd D:\\Dev\\voxbeat, /home/me/apps/foo) → BẮT BUỘC điền đúng vào task.project_dir.
+  Không được để trống nếu user đã chỉ định. Không đề xuất clone vào thư mục trong cây AI Orchestrator.
 
 Link context (parser-registry đã quét tin nhắn):
 {link_hints}
+Projects root mặc định (ngoài Orchestrator): {projects_root}
 
 Quy tắc lập kế hoạch:
 - Task nhỏ 1 bước -> 1 subtask cho đúng agent chuyên môn. Task phức tạp -> chia subtask chain có dependency.
+- CLONE GIT: repo nặng KHÔNG clone vào thư mục Orchestrator. Dùng path user chỉ định, hoặc Projects root ở trên + slug.
+  Trong reply hãy nêu rõ sẽ clone vào path nào.
+- CLONE / MỞ REPO / "chạy app" (có GitHub/GitLab hoặc package.json + server): đây là MỘT tiến trình, KHÔNG tách "chỉ clone" là xong.
+  Phải cover trong subtask build (stark và/hoặc banner):
+  (1) confirm repo đã clone, (2) install deps, (3) build FE nếu cần,
+  (4) START app — cả frontend preview/dev VÀ backend/API nếu repo có server (Express, FastAPI, scripts "dev"/"start", server.ts…),
+  (5) smoke: http_get Live URL UI = 200 VÀ http_get API trực tiếp (:3000…) VÀ http_get
+      cùng path /api/... trên host Live URL (same-origin trình duyệt).
+  UI đẹp / backend direct OK mà preview host /api 404 = CHƯA XONG — plan phải cover proxy/api_base hoặc bugfix.
 - LUÔN có subtask QA cuối cùng gán cho hawkeye, depends_on toàn bộ subtask build. Mô tả phải gồm:
-  * TỪNG acceptance criteria cụ thể (file, URL status 200, nội dung...)
+  * TỪNG acceptance criteria cụ thể (file, URL status 200, nội dung, API endpoint…)
   * Visual QA bắt buộc nếu có UI: Live URL, screenshot desktop+mobile, inspect_render
+  * Nếu có backend: ghi rõ URL API direct + URL API same-origin trên Live host; FAIL nếu chỉ UI/direct ổn
+  * Hawkeye bắt buộc create_bug_ticket khi FAIL (Stark fix) — Jarvis không tạo bug; Jarvis chỉ Final Review sau QA PASS
   * Nếu có dev server URL từ builder thì ghi rõ trong description QA
 - Mô tả subtask phải đầy đủ context (steer message). Tuân thủ hướng dẫn Build/QA trong Link context ở trên (đưa nguyên văn URL, tags).
 - Việc liên quan DB migration / security / deploy production: thêm tag tương ứng ("db-migration", "security", "deploy-prod") để hệ thống bắt buộc operator review.
 - Trả lời người dùng ngay trong "reply" — không để họ chờ trong im lặng.
+
+ĐỊNH DẠNG OUTPUT (bắt buộc): ký tự đầu tiên là "{{", ký tự cuối cùng là "}}".
+KHÔNG bọc trong mảng [...], KHÔNG code fence ```, KHÔNG text trước/sau JSON.
 """
 
 CLOSURE_VERIFY_PROMPT = """Task cha: {title}
@@ -91,10 +108,21 @@ Live URL của project (orchestrator serve tĩnh): {preview_url}
 
 Nhiệm vụ của bạn (Jarvis, final review — Phase 5): VERIFY ĐỘC LẬP, không tin lời khai suông.
 Dùng tool kiểm tra thực tế: list_dir/read_file xem file có tồn tại và đúng nội dung không,
-http_get Live URL ở trên (phải trả status=200 nếu là sản phẩm web). Kiểm tra ít nhất 2-3 điểm quan trọng nhất.
+http_get Live URL ở trên (phải trả status=200 nếu là sản phẩm web).
+LƯU Ý ĐẶC BIỆT:
+- package.json thiếu node_modules, hoặc React/Vite chưa build → màn trắng → REJECT.
+- Nếu repo có backend/API (server.ts, express, scripts start/dev server, thư mục api/server): 
+  CHỈ http_get preview UI = 200 LÀ KHÔNG ĐỦ. Phải http_get health/API trực tiếp (port phổ biến :3000/:8000)
+  VÀ http_get cùng path trên host Live URL (same-origin — FE fetch('/api/...')).
+  Direct OK mà Live host /api 404 → REJECT (thiếu proxy/api_base).
+  UI ổn mà API không chạy / lỗi → VERDICT: REJECTED.
 Sau khi kiểm tra, post_message một "Final Review" tổng hợp evidence chain (build -> QA -> verify),
-ghi rõ "Live URL verified: <url> (status 200)" nếu đã check được.
-Rồi trả lời text cuối: dòng đầu tiên là "VERDICT: APPROVED" hoặc "VERDICT: REJECTED", sau đó là lý do.
+ghi rõ "Live URL verified", "API direct verified", "API same-origin verified".
+Rồi trả lời text cuối:
+- Dòng đầu: "VERDICT: APPROVED" hoặc "VERDICT: REJECTED"
+- Nếu REJECTED: liệt kê từng lỗi (bullet: file/URL/triệu chứng). BẠN KHÔNG tạo bug ticket —
+  hệ thống sẽ trả việc về Hawkeye (QA) để create_bug_ticket → Stark fix → QA lại.
+  Chỉ review khi QA đã PASS.
 """
 
 MEMORY_PROMPT = """Task vừa hoàn thành:
@@ -125,17 +153,125 @@ def _slug(text: str) -> str:
     return s[:40] or "project"
 
 
+async def _fallback_plain_reply(user_message: str, history_text: str, planner: dict) -> bool:
+    """Planner hỏng JSON — vẫn trả lời người dùng bằng text thường. True nếu đã reply."""
+    prompt = (
+        "Bạn là Jarvis — orchestrator của hệ thống multi-agent, trả lời bằng tiếng Việt, "
+        "ngắn gọn và cụ thể. Trả lời bằng VĂN BẢN THƯỜNG (không JSON).\n\n"
+        f"BOARD hiện tại:\n{_board_snapshot()}\n\n"
+        f"MEMORY:\n{memory.read_memory()[-2000:]}\n\n"
+        f"Lịch sử chat:\n{history_text}\n\n"
+        f'Người dùng hỏi: "{user_message}"\n\n'
+        "Nếu đây là yêu cầu giao việc (cần tạo task), hãy nói rõ bạn cần họ gửi lại "
+        "để lập kế hoạch; nếu là câu hỏi thì trả lời trực tiếp."
+    )
+    try:
+        text = await llm.chat_text(
+            [{"role": "user", "content": prompt}],
+            model=planner["model"],
+            base_url=planner["base_url"],
+            api_key=planner["api_key"],
+        )
+    except Exception:
+        log.exception("Fallback plain reply failed")
+        return False
+    text = (text or "").strip()
+    if not text:
+        return False
+    store.add_chat("jarvis", text)
+    return True
+
+
 async def handle_chat(user_message: str, project: str | None = None) -> None:
     """Phase 1 + 2: tiếp nhận, phân tích, lập kế hoạch, trả lời ngay.
 
     `project`: slug project đang chọn trên UI — task mới buộc gắn vào đây.
     """
+    from pathlib import Path
+
+    from ..paths import (
+        extract_target_dir,
+        is_under_orchestrator,
+        resolve_project_dir,
+        wants_default_path,
+    )
+
     history = store.list_chat(limit=10)
     history_text = "\n".join(f"{m['role']}: {m['message'][:300]}" for m in history[:-1]) or "(chưa có)"
 
     active = (project or app_settings.active_project() or "").strip()
+    forced_dir = ""  # path user chọn khi trả lời pending_clone
+    accepted_default = False
+
+    # Tiếp tục chờ chọn thư mục clone
+    pending = app_settings.pending_clone()
+    if pending:
+        chosen = extract_target_dir(user_message)
+        if chosen or wants_default_path(user_message):
+            forced_dir = chosen or ""
+            accepted_default = wants_default_path(user_message) and not chosen
+            user_message = pending.get("message") or user_message
+            if pending.get("project"):
+                active = pending["project"]
+            app_settings.clear_pending_clone()
+        elif detect_links(user_message):
+            # User gửi yêu cầu mới → hủy pending cũ
+            app_settings.clear_pending_clone()
+        else:
+            sug = pending.get("suggested_dir") or app_settings.effective_projects_root()
+            store.add_chat(
+                "jarvis",
+                f"Vẫn đang chờ thư mục clone cho `{pending.get('url')}`.\n"
+                f"— Gửi path tuyệt đối (vd `D:\\Dev\\myapp`)\n"
+                f"— Hoặc gõ `mặc định` → `{sug}`\n"
+                f"— Đổi gốc mặc định trong Settings → Projects",
+            )
+            return
+
     detected_links = detect_links(user_message)
     link_hints = default_registry.planning_hints(detected_links)
+
+    # Clone git: hỏi thư mục nếu user chưa chỉ định (tránh nhồi vào Orchestrator)
+    git_early = next(
+        (x for x in detected_links if x.get("type") in ("github", "gitlab") and x.get("clone_url")),
+        None,
+    )
+    msg_path = forced_dir or extract_target_dir(user_message)
+    if (
+        git_early
+        and not msg_path
+        and not accepted_default
+        and not wants_default_path(user_message)
+    ):
+        need_ask = True
+        if active:
+            ap = app_settings.get_project(active)
+            pdir = (ap or {}).get("project_dir") or ""
+            if pdir and not is_under_orchestrator(pdir):
+                need_ask = False
+            elif pdir and (Path(pdir) / ".git").is_dir():
+                need_ask = False  # project đã gắn repo
+        if need_ask:
+            repo = git_early.get("repo") or "project"
+            slug_guess = _slug(repo)
+            suggested, _ = resolve_project_dir(
+                slug=slug_guess if not active else active,
+                projects_root=app_settings.effective_projects_root(),
+            )
+            app_settings.set_pending_clone({
+                "url": git_early["clone_url"],
+                "message": user_message,
+                "project": active,
+                "suggested_dir": suggested,
+            })
+            store.add_chat(
+                "jarvis",
+                f"Repo `{git_early['clone_url']}` — bạn muốn clone vào thư mục nào?\n"
+                f"— Path tuyệt đối, vd: `D:\\Dev\\{slug_guess}`\n"
+                f"— Hoặc gõ `mặc định` → `{suggested}` (ngoài thư mục Orchestrator)\n"
+                f"— Đổi thư mục gốc: Settings → Projects root",
+            )
+            return
 
     prompt = PLANNING_PROMPT.format(
         roster=roster_description(),
@@ -146,20 +282,37 @@ async def handle_chat(user_message: str, project: str | None = None) -> None:
         message=user_message.replace('"', "'"),
         active_project=active or "(chưa chọn — có thể tạo project mới nếu cần)",
         link_hints=link_hints,
+        projects_root=app_settings.effective_projects_root(),
     )
 
+    planner = app_settings.resolve_llm(role="planner")
     try:
-        planner = app_settings.resolve_llm(role="planner")
-        raw = await llm.chat_text(
+        decision = await llm.chat_json(
             [{"role": "user", "content": prompt}],
             model=planner["model"],
             base_url=planner["base_url"],
             api_key=planner["api_key"],
+            expect_object=True,
         )
-        decision = llm.extract_json(raw)
+        decision = llm.normalize_json_object(decision)
+        if not isinstance(decision, dict):
+            raise ValueError(f"Planner trả về không phải object: {type(decision)}")
+        if "action" not in decision and ("message" in decision or "reply" in decision):
+            # Model quên action — câu hỏi → reply
+            decision = {
+                "action": "reply",
+                "message": decision.get("message") or decision.get("reply") or "",
+            }
     except Exception as e:
         log.exception("Planning failed")
-        store.add_chat("jarvis", f"Xin lỗi, tôi gặp lỗi khi phân tích yêu cầu: {e}")
+        # Câu hỏi không được fail cứng: trả lời bằng text thường
+        answered = await _fallback_plain_reply(user_message, history_text, planner)
+        if not answered:
+            store.add_chat(
+                "jarvis",
+                "Xin lỗi, model planner đang trả về dữ liệu không hợp lệ nên tôi chưa lập được kế hoạch. "
+                f"Thử gửi lại, hoặc đổi model Planner trong Settings.\nChi tiết: {e}",
+            )
         return
 
     if decision.get("action") == "reply":
@@ -174,14 +327,49 @@ async def handle_chat(user_message: str, project: str | None = None) -> None:
         return
 
     # Ưu tiên project đang chọn trên UI; không tạo project mới mỗi lần chat
+    from ..paths import is_plausible_fs_path
+
+    planner_dir = (tinfo.get("project_dir") or "").strip()
+    if planner_dir and not is_plausible_fs_path(planner_dir):
+        planner_dir = ""
+    msg_explicit = forced_dir or extract_target_dir(user_message) or planner_dir
     if active:
         proj = app_settings.get_project(active) or app_settings.upsert_project(active)
         project_slug = proj["slug"]
-        project_dir = proj.get("project_dir") or str(config.WORKSPACE_DIR / "projects" / project_slug)
+        project_dir, dir_reason = resolve_project_dir(
+            slug=project_slug,
+            explicit=msg_explicit,
+            active_project_dir=proj.get("project_dir") or "",
+            projects_root=app_settings.effective_projects_root(),
+        )
     else:
         project_slug = tinfo.get("project") or _slug(tinfo["title"])
-        project_dir = tinfo.get("project_dir") or str(config.WORKSPACE_DIR / "projects" / project_slug)
+        project_dir, dir_reason = resolve_project_dir(
+            slug=project_slug,
+            explicit=msg_explicit,
+            projects_root=app_settings.effective_projects_root(),
+        )
         app_settings.upsert_project(project_slug, name=project_slug, project_dir=project_dir)
+
+    try:
+        Path(project_dir).mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        fallback, dir_reason = resolve_project_dir(
+            slug=project_slug,
+            projects_root=app_settings.effective_projects_root(),
+        )
+        store.add_chat(
+            "jarvis",
+            f"Không tạo được thư mục `{project_dir}` ({e}). "
+            f"Chuyển sang mặc định `{fallback}`.",
+        )
+        project_dir = fallback
+        try:
+            Path(project_dir).mkdir(parents=True, exist_ok=True)
+        except OSError as e2:
+            store.add_chat("jarvis", f"Vẫn không tạo được thư mục project: {e2}")
+            return
+    app_settings.upsert_project(project_slug, project_dir=project_dir)
 
     # GitHub/GitLab: clone vào project trước khi tạo subtask (parser-registry)
     git_link = next(
@@ -202,7 +390,10 @@ async def handle_chat(user_message: str, project: str | None = None) -> None:
 
     git_note = ""
     if git_url:
-        store.add_chat("jarvis", f"Đang chuẩn bị git repo `{git_url}` vào project `{project_slug}`…")
+        store.add_chat(
+            "jarvis",
+            f"Đang clone `{git_url}` → `{project_dir}` ({dir_reason})…",
+        )
         clone = git_ops.ensure_clone(git_url, project_dir)
         if not clone.get("ok"):
             store.add_chat(
@@ -220,10 +411,12 @@ async def handle_chat(user_message: str, project: str | None = None) -> None:
             f"- branch: {clone.get('branch')}\n"
             f"- {clone.get('message')}\n"
             f"Làm việc TRÊN repo này. Dùng git_status để xác nhận. "
-            f"Commit qua run_command khi xong (không force push)."
+            f"PIPELINE xong = install + build/start FE + start API (nếu có) + smoke http_get UI&API. "
+            f"Không tự commit/push."
         )
         tinfo["description"] = (tinfo.get("description") or "") + git_note
-
+    elif msg_explicit or not is_under_orchestrator(project_dir):
+        store.add_chat("jarvis", f"Project dir: `{project_dir}` ({dir_reason}).")
     # Gắn steer từ từng link đã detect vào subtask
     for st in subtasks_info:
         agent = st.get("agent", "")
@@ -311,20 +504,95 @@ def _qa_verdict(parent_id: str) -> tuple[str, str]:
     return "UNKNOWN", "(chưa có báo cáo QA)"
 
 
+def _parse_jarvis_verdict(result: str) -> bool:
+    """True nếu Final Review APPROVED. Ưu tiên dòng VERDICT:; REJECTED thắng nếu cùng có."""
+    up = (result or "").upper()
+    for line in up.splitlines()[:20]:
+        if "VERDICT:" not in line:
+            continue
+        if "REJECTED" in line:
+            return False
+        if "APPROVED" in line:
+            return True
+    if re.search(r"VERDICT:\s*REJECTED", up):
+        return False
+    if re.search(r"VERDICT:\s*APPROVED", up):
+        return True
+    # Fallback: có APPROVED và không có REJECTED
+    return "APPROVED" in up and "REJECTED" not in up
+
+
 def _open_related_bugs(parent: Task) -> list[Task]:
+    """Bug đang mở thuộc task cha (ưu tiên parent_id) hoặc cùng project (legacy)."""
+    under = store.list_tasks(
+        parent_id=parent.id,
+        type="bug",
+        status=["backlog", "in_progress", "blocked"],
+    )
+    if under:
+        return under
     bugs = store.list_tasks(type="bug", status=["backlog", "in_progress", "blocked"])
     return [b for b in bugs if b.project == parent.project]
 
 
-MAX_FIX_ROUNDS = 2
+MAX_FIX_ROUNDS = 3
 
 
 def _fix_rounds(parent: Task) -> int:
     return sum(1 for t in parent.tags if t.startswith("fix-round"))
 
 
+def _has_bug_tickets(parent: Task) -> bool:
+    return bool(store.list_tasks(parent_id=parent.id, type="bug"))
+
+
+def _assign_bugs_to_stark(parent: Task, bugs: list[Task]) -> int:
+    """Giao bug (do QA tạo) cho Stark — Jarvis không tự tạo bug."""
+    rounds = _fix_rounds(parent)
+    if rounds >= MAX_FIX_ROUNDS:
+        return -1
+    store.update_task_fields(parent.id, tags=[*parent.tags, f"fix-round-{rounds + 1}"])
+    for bug in bugs:
+        store.update_task_fields(bug.id, assignee="stark", parent_id=parent.id)
+        if bug.status in ("blocked", "failed", "testing", "review", "done"):
+            try:
+                store.set_status(bug.id, "backlog", "jarvis")
+            except Exception:
+                store.set_status(bug.id, "in_progress", "jarvis")
+                store.set_status(bug.id, "backlog", "jarvis")
+        store.add_event(
+            bug.id, "jarvis", "system",
+            f"QA FAIL — giao Stark fix (round {rounds + 1}).",
+        )
+    if parent.status in ("blocked", "failed", "testing", "review", "backlog"):
+        try:
+            store.set_status(parent.id, "in_progress", "jarvis")
+        except Exception:
+            store.set_status(parent.id, "backlog", "jarvis")
+            store.set_status(parent.id, "in_progress", "jarvis")
+    return rounds + 1
+
+
+def _return_to_qa_for_bugs(qa: Task, parent: Task, notes: str, mark_tag: str, chat: str) -> None:
+    """Jarvis/ hệ thống không tạo bug — trả Hawkeye để create_bug_ticket rồi Stark fix."""
+    detail = (notes or "")[:3500]
+    store.add_event(
+        qa.id, "jarvis", "system",
+        f"{mark_tag}\nBẮT BUỘC: với mỗi lỗi bên dưới gọi create_bug_ticket (assignee Stark qua parent), "
+        f"rồi VERDICT: FAIL. Không PASS khi còn lỗi.\n\n{detail}",
+    )
+    _requeue_qa(
+        qa, mark_tag,
+        "Trả về QA: phải create_bug_ticket cho từng lỗi (Jarvis không tạo bug).",
+        chat,
+    )
+
+
 def _requeue_qa(qa: Task, mark_tag: str, reason: str, chat_msg: str) -> None:
-    store.update_task_fields(qa.id, tags=[*qa.tags, mark_tag])
+    tags = list(qa.tags or [])
+    if mark_tag not in tags:
+        tags.append(mark_tag)
+    store.update_task_fields(qa.id, tags=tags)
     store.set_status(qa.id, "in_progress", "jarvis")
     store.set_status(qa.id, "backlog", "jarvis")
     store.add_event(qa.id, "jarvis", "system", reason)
@@ -332,73 +600,128 @@ def _requeue_qa(qa: Task, mark_tag: str, reason: str, chat_msg: str) -> None:
 
 
 async def check_parent_progress(parent_id: str) -> None:
-    """Được gọi mỗi khi một subtask xong. Nếu tất cả đã ở testing/done -> chạy closure."""
+    """Jarvis Lifecycle Supervisor — Kiểm tra & cập nhật tiến độ toàn bộ vòng đời subtask -> parent task."""
     parent = store.get_task(parent_id)
-    if not parent or parent.status in ("done", "archived", "review"):
+    if not parent or parent.status in ("done", "archived"):
         return
     subtasks = store.list_tasks(parent_id=parent_id)
     if not subtasks:
         return
+
+    # 1. Cập nhật real-time trạng thái task cha dựa vào tiến trình các subtask
+    has_working = any(t.status in ("in_progress", "testing", "review") for t in subtasks)
+    has_blocked = any(t.status == "blocked" for t in subtasks)
+
+    if has_working and parent.status == "backlog":
+        store.set_status(parent.id, "in_progress", "jarvis")
+        parent.status = "in_progress"
+    elif has_blocked and parent.status != "blocked":
+        store.set_status(parent.id, "blocked", "jarvis")
+        parent.status = "blocked"
+
+    # Không tự động gỡ blocked/failed cho parent task. Nếu nó đã bị blocked/failed (do QA/Verify fail), 
+    # nó phải ở trạng thái đó cho đến khi user (hoặc auto-recover) chuyển về backlog.
+    if parent.status in ("blocked", "failed"):
+        return
+
+    # 2. Nếu còn subtask ở backlog, in_progress, hoặc blocked -> chưa đủ điều kiện closure
     if any(t.status in ("backlog", "in_progress", "blocked") for t in subtasks):
         return
 
-    # Fix round: nếu QA đã tạo bug đang mở, giao cho builder xử lý trước khi đóng
+    # Fix round: bug do QA tạo → giao Stark (Jarvis không tạo bug)
     open_bugs = _open_related_bugs(parent)
     if open_bugs:
-        rounds = _fix_rounds(parent)
-        if rounds >= MAX_FIX_ROUNDS:
+        n = _assign_bugs_to_stark(parent, open_bugs)
+        if n < 0:
             store.set_status(parent_id, "blocked", "jarvis")
             store.add_chat(
                 "jarvis",
                 f"{parent.id} vẫn còn {len(open_bugs)} bug mở sau {MAX_FIX_ROUNDS} fix round "
-                f"({', '.join(b.id for b in open_bugs)}) — dừng tự động, cần bạn xem xét trên board.",
+                f"({', '.join(b.id for b in open_bugs)}) — dừng tự động, cần bạn xem trên board.",
             )
             return
-        store.update_task_fields(parent_id, tags=[*parent.tags, f"fix-round-{rounds + 1}"])
-        for bug in open_bugs:
-            store.update_task_fields(bug.id, assignee="stark", parent_id=parent_id)
-            store.add_event(bug.id, "jarvis", "system",
-                            f"Giao stark xử lý trong fix round {rounds + 1} trước khi đóng task cha.")
         store.add_chat(
             "jarvis",
-            f"QA phát hiện {len(open_bugs)} bug ở {parent.id} — fix round {rounds + 1}: "
-            + ", ".join(b.id for b in open_bugs),
+            f"QA đã tạo {len(open_bugs)} bug ở {parent.id} — fix round {n}: "
+            + ", ".join(b.id for b in open_bugs)
+            + " → Stark fix, rồi Hawkeye QA lại (chưa tới Jarvis).",
         )
-        return  # scheduler sẽ chạy bug fix, xong sẽ gọi lại hàm này
+        return
 
     await _closure(parent, subtasks)
 
 
 async def _closure(parent: Task, subtasks: list[Task]) -> None:
-    """Phase 5: Pepper tổng hợp -> Jarvis verify độc lập -> done -> Phase 6: ghi nhớ."""
+    """Phase 5: chỉ khi QA PASS → Pepper → Jarvis Final Review. QA FAIL → bug/Stark, không qua Jarvis."""
     verdict, qa_text = _qa_verdict(parent.id)
 
     qa_tasks = [t for t in subtasks if t.assignee == "hawkeye"]
     qa = qa_tasks[-1] if qa_tasks else None
+    rounds = _fix_rounds(parent)
 
-    # QA chưa có verdict rõ ràng (agent kẹt/chưa báo cáo) -> chạy lại QA một lần
-    # thay vì final review trên dữ liệu rỗng.
+    # QA chưa có verdict rõ → bắt Hawkeye chạy lại (chưa tới Jarvis)
     if verdict == "UNKNOWN" and qa and qa.status == "testing" and "qa-retry" not in qa.tags:
         _requeue_qa(
             qa, "qa-retry",
             "Báo cáo QA chưa có verdict PASS/FAIL rõ ràng — requeue để Hawkeye chạy lại.",
-            f"Báo cáo QA của {qa.id} chưa có verdict rõ ràng — tôi cho Hawkeye chạy QA lại "
-            f"trước khi review cuối {parent.id}.",
+            f"Báo cáo QA của {qa.id} chưa rõ — Hawkeye QA lại trước khi Jarvis review {parent.id}.",
         )
         return
 
-    # QA FAIL nhưng bug đã được fix trong fix round sau đó -> re-QA để verdict phản ánh code mới.
-    rounds = _fix_rounds(parent)
-    if verdict == "FAIL" and qa and qa.status == "testing" and rounds > 0 \
-            and f"reqa-{rounds}" not in qa.tags:
-        _requeue_qa(
-            qa, f"reqa-{rounds}",
-            f"Verdict FAIL là từ trước fix round {rounds} — requeue để Hawkeye re-verify code đã sửa.",
-            f"Bug ở {parent.id} đã được fix — tôi cho Hawkeye QA lại để xác nhận trước khi đóng.",
+    # ===== QA FAIL: không gọi Jarvis. Bug do QA tạo → Stark; thiếu bug → trả QA tạo ticket =====
+    if verdict == "FAIL":
+        open_bugs = _open_related_bugs(parent)
+        if open_bugs:
+            n = _assign_bugs_to_stark(parent, open_bugs)
+            if n < 0:
+                store.set_status(parent.id, "blocked", "jarvis")
+                store.add_chat(
+                    "jarvis",
+                    f"{parent.id}: QA FAIL + còn bug mở sau {MAX_FIX_ROUNDS} round — cần bạn xem board.",
+                )
+                return
+            store.add_chat(
+                "jarvis",
+                f"{parent.id}: QA FAIL — giao Stark fix {', '.join(b.id for b in open_bugs)} "
+                f"(round {n}). Jarvis chỉ review sau khi QA PASS.",
+            )
+            return
+
+        if qa and not _has_bug_tickets(parent) and "qa-must-file-bugs" not in qa.tags:
+            _return_to_qa_for_bugs(
+                qa, parent, qa_text,
+                "qa-must-file-bugs",
+                f"{parent.id}: Hawkeye VERDICT FAIL nhưng chưa create_bug_ticket — "
+                f"trả QA tạo bug cho Stark (Jarvis chưa vào).",
+            )
+            return
+
+        # Đã có bug (đã fix xong) hoặc đã nhắc tạo bug → re-QA
+        if qa and f"reqa-{max(rounds, 1)}" not in qa.tags:
+            _requeue_qa(
+                qa, f"reqa-{max(rounds, 1)}",
+                "QA từng FAIL — requeue Hawkeye verify lại sau khi Stark fix (trước Jarvis).",
+                f"Bug/fix ở {parent.id} xong — Hawkeye QA lại. Chỉ khi PASS mới tới Jarvis.",
+            )
+            return
+
+        store.set_status(parent.id, "blocked", "jarvis")
+        store.add_chat(
+            "jarvis",
+            f"{parent.id}: QA FAIL kéo dài sau {MAX_FIX_ROUNDS} vòng — dừng, cần bạn xem board.\n"
+            f"QA: {qa_text[:500]}",
         )
         return
 
-    # Pepper tổng hợp báo cáo QA lên task cha
+    # Chỉ PASS mới tới Jarvis
+    if verdict != "PASS":
+        store.add_chat(
+            "jarvis",
+            f"{parent.id}: chưa có QA PASS (verdict={verdict}) — chưa tới Final Review.",
+        )
+        return
+
+    # Pepper tổng hợp (QA đã PASS)
     try:
         pepper = AGENTS["pepper"]
         deliverables = _collect_deliverables(subtasks)
@@ -406,11 +729,11 @@ async def _closure(parent: Task, subtasks: list[Task]) -> None:
             "pepper",
             pepper.system_prompt(),
             f"Task cha {parent.id}: {parent.title}\n\nDeliverable các subtask:\n{deliverables}\n\n"
-            f"QA verdict: {verdict}\n{qa_text[:2000]}\n\n"
+            f"QA verdict: PASS\n{qa_text[:2000]}\n\n"
             "Hãy post_message lên task hiện tại báo cáo QA Complete:\n"
-            f"- Tiêu đề: '## QA Complete — {verdict}' (PASS hoặc FAIL)\n"
-            "- Tóm tắt: deliverable build, Live URL, screenshot links từ Hawkeye, CSS checks, bug tickets.\n"
-            "- Khuyến nghị bước tiếp (nếu FAIL: cần fix gì; nếu PASS: sẵn sàng final review).\n"
+            "- Tiêu đề: '## QA Complete — PASS'\n"
+            "- Tóm tắt: deliverable build, Live URL, screenshot links từ Hawkeye, CSS checks.\n"
+            "- Khuyến nghị: sẵn sàng Jarvis Final Review.\n"
             "Rồi trả lời text ngắn.",
             parent,
             pepper.tools,
@@ -419,7 +742,7 @@ async def _closure(parent: Task, subtasks: list[Task]) -> None:
     except Exception:
         log.exception("Pepper summary failed (non-blocking)")
 
-    # Jarvis verify độc lập — không tin lời khai suông
+    # Jarvis Final Review (chỉ sau QA PASS)
     jarvis = AGENTS["jarvis"]
     preview_url = f"{config.BASE_URL}/preview/{parent.project}/"
     try:
@@ -430,7 +753,7 @@ async def _closure(parent: Task, subtasks: list[Task]) -> None:
                 title=parent.title,
                 description=parent.description[:1500],
                 deliverables=_collect_deliverables(subtasks),
-                qa_verdict=f"{verdict}\n{qa_text[:1500]}",
+                qa_verdict=f"PASS\n{qa_text[:1500]}",
                 preview_url=preview_url,
             ),
             parent,
@@ -443,31 +766,58 @@ async def _closure(parent: Task, subtasks: list[Task]) -> None:
         store.add_chat("jarvis", f"Không thể verify {parent.id} do lỗi: {e}. Task chuyển sang blocked.")
         return
 
-    approved = "APPROVED" in result.upper().split("\n")[0] or (
-        "APPROVED" in result.upper() and "REJECTED" not in result.upper()
-    )
+    approved = _parse_jarvis_verdict(result)
+    store.add_event(parent.id, "jarvis", "comment", f"Final Review\n\n{result[:6000]}")
 
-    if not approved or verdict == "FAIL":
-        store.set_status(parent.id, "blocked", "jarvis")
-        store.add_chat(
-            "jarvis",
-            f"Final review {parent.id}: KHÔNG đạt (QA: {verdict}). Task chuyển sang blocked — "
-            f"bạn xem chi tiết trên board, có thể bấm '↺ Chạy lại' trên card để review lại.\n\n{result[:800]}",
+    if not approved:
+        # Jarvis REJECT — không tự tạo bug; trả Hawkeye tạo ticket → Stark
+        head = "\n".join(result.strip().splitlines()[:12])[:900]
+        if not qa or rounds >= MAX_FIX_ROUNDS:
+            store.set_status(parent.id, "blocked", "jarvis")
+            store.add_chat(
+                "jarvis",
+                f"Final review {parent.id}: REJECTED sau {rounds}/{MAX_FIX_ROUNDS} round — cần bạn xem board.\n\n{head}",
+            )
+            return
+
+        tag = f"reqa-after-reject-{rounds + 1}"
+        if tag in (qa.tags or []):
+            store.set_status(parent.id, "blocked", "jarvis")
+            store.add_chat(
+                "jarvis",
+                f"Final review {parent.id}: REJECTED lặp lại — dừng.\n\n{head}",
+            )
+            return
+
+        _return_to_qa_for_bugs(
+            qa, parent, result, tag,
+            f"Final review {parent.id}: REJECTED — trả Hawkeye create_bug_ticket → Stark fix → QA PASS "
+            f"rồi Jarvis review lại.\n\n{head}",
         )
+        store.update_task_fields(parent.id, tags=[*parent.tags, f"fix-round-{rounds + 1}"])
+        if parent.status != "in_progress":
+            try:
+                store.set_status(parent.id, "in_progress", "jarvis")
+            except Exception:
+                pass
         return
 
-    # Đóng toàn bộ: subtask + bug -> done, parent -> done (hoặc review nếu operator gate)
+    # APPROVED — đóng
     for t in subtasks:
         if t.status == "testing":
             store.set_status(t.id, "done", "jarvis")
+    # đóng luôn bug đã xong
+    for b in store.list_tasks(parent_id=parent.id, type="bug"):
+        if b.status == "testing":
+            store.set_status(b.id, "done", "jarvis")
+
     if parent.review_type == "operator":
         store.set_status(parent.id, "testing", "jarvis")
         store.set_status(parent.id, "review", "jarvis")
         store.add_chat(
             "jarvis",
-            f"{parent.id} đã qua QA và verify, nhưng thuộc diện operator review "
-            f"(tags: {', '.join(parent.tags)}). Chờ bạn bấm Approve trên board.\n"
-            f"🔗 Xem trước khi duyệt: {preview_url}",
+            f"{parent.id} QA PASS + Final Review APPROVED, chờ operator Approve.\n"
+            f"🔗 {preview_url}",
         )
     else:
         store.set_status(parent.id, "testing", "jarvis")
@@ -475,7 +825,7 @@ async def _closure(parent: Task, subtasks: list[Task]) -> None:
         store.add_chat(
             "jarvis",
             f"Hoàn tất {parent.id} — {parent.title}.\n"
-            f"🔗 Live URL: {preview_url}\n\n{result[:600]}",
+            f"🔗 Live URL: {preview_url}\n\n" + "\n".join(result.strip().splitlines()[:8])[:800],
         )
 
     await _phase6_memorize(parent, result)

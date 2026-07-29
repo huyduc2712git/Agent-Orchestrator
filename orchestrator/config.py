@@ -11,6 +11,11 @@ LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://opencode.ai/zen/v1").rstrip("/
 LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-v4-flash-free")
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 
+# Model "thinking" đốt phần lớn budget vào reasoning_tokens; budget nhỏ khiến
+# content trả về rỗng hoặc JSON bị cắt giữa chừng (finish_reason=length).
+LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "16384"))
+LLM_MAX_TOKENS_CEILING = int(os.getenv("LLM_MAX_TOKENS_CEILING", "32768"))
+
 # Phân bổ model theo thế mạnh, tránh dồn hết cho một model:
 #   planner  — lập kế hoạch, chain-of-thought dài, tool calling tin cậy
 #   coder    — viết/sửa code thật

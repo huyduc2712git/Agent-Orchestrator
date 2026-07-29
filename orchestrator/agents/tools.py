@@ -405,34 +405,45 @@ class ToolContext:
 
         last_err = ""
         for tok in tokens:
-            try:
-                resp = httpx.get(api, headers={"X-Figma-Token": tok["token"]}, timeout=30)
-            except httpx.HTTPError as e:
-                last_err = f"{tok['name']}: {e}"
-                continue
-            if resp.status_code == 200:
-                data = resp.json()
-                if node_id:
-                    nodes = data.get("nodes", {})
-                    entry = next(iter(nodes.values()), None)
-                    doc = entry.get("document") if entry else None
-                    if not doc:
-                        return f"ERROR: node {node_id} không tồn tại trong file."
-                else:
-                    doc = data.get("document")
-                    if not doc:
-                        return "ERROR: response Figma không có document."
-                name = data.get("name", "")
-                lines: list[str] = []
-                _figma_walk(doc, 0, lines)
-                header = f"Figma file: {name} (key={file_key})"
-                if node_id:
-                    header += f" — node {node_id}"
-                return header + "\n" + "\n".join(lines)
-            last_err = f"{tok['name']}: HTTP {resp.status_code}"
+            resp = None
+            for attempt in range(3):
+                try:
+                    resp = httpx.get(api, headers={"X-Figma-Token": tok["token"]}, timeout=30)
+                except httpx.HTTPError as e:
+                    last_err = f"{tok['name']}: {e}"
+                    resp = None
+                    break
+                if resp.status_code == 429 and attempt < 2:
+                    import time
+                    time.sleep(2 * (attempt + 1))
+                    continue
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if node_id:
+                        nodes = data.get("nodes", {})
+                        entry = next(iter(nodes.values()), None)
+                        doc = entry.get("document") if entry else None
+                        if not doc:
+                            return f"ERROR: node {node_id} không tồn tại trong file."
+                    else:
+                        doc = data.get("document")
+                        if not doc:
+                            return "ERROR: response Figma không có document."
+                    name = data.get("name", "")
+                    lines: list[str] = []
+                    _figma_walk(doc, 0, lines)
+                    header = f"Figma file: {name} (key={file_key})"
+                    if node_id:
+                        header += f" — node {node_id}"
+                    return header + "\n" + "\n".join(lines)
+                last_err = f"{tok['name']}: HTTP {resp.status_code}"
+                if resp.status_code != 429:
+                    break
+            # HTTPError hoặc hết retry trên token này → thử token tiếp
+            continue
         return (
             f"ERROR: không token nào truy cập được file ({last_err}). "
-            "File có thể thuộc account khác — thêm token của account đó trong Settings."
+            "File có thể thuộc account khác hoặc bị Figma Limit (HTTP 429) — thêm token hoặc thử lại sau."
         )
 
     # --- board tools ---
@@ -463,6 +474,8 @@ class ToolContext:
             type="bug",
             project=self.task.project,
             project_dir=self.task.project_dir,
+            parent_id=self.task.parent_id or self.task.id,
+            assignee="stark",
             tags=["discovered-issue", "bug"],
             severity=severity,
             repro_steps=repro_steps,
@@ -473,7 +486,7 @@ class ToolContext:
             self.task.id, self.agent, "system",
             f"Bug ticket {bug.id} đã được tạo và link related: {title}",
         )
-        return f"OK: đã tạo bug {bug.id}"
+        return f"OK: đã tạo bug {bug.id} (gắn task cha, Stark fix) — đây là BUG ticket, không phải subtask."
 
     # --- git tools ---
 

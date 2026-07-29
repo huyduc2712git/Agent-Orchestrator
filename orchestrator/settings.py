@@ -15,12 +15,16 @@ _DEFAULT = {
     "figma_tokens": [],
     "projects": [],  # [{"slug": "...", "name": "...", "project_dir": "..."}]
     "active_project": "",
+    # Thư mục gốc clone repo — ngoài cây Orchestrator (tránh nặng workspace)
+    "projects_root": "",
     # LLM tools: mỗi entry = 1 endpoint OpenAI-compatible (base_url + model + api_key)
     "llm_tools": [],
     # Gán tool_id cho từng vai trò: planner | coder | critic | summary
     "role_models": {},
     # Git tokens cho private repo: [{"name", "host", "token"}]
     "git_tokens": [],
+    # Chờ user chọn thư mục clone: {url, message, project, suggested_dir}
+    "pending_clone": None,
 }
 
 ROLE_KEYS = ("planner", "coder", "critic", "summary")
@@ -124,12 +128,63 @@ def set_active_project(slug: str) -> None:
     save(data)
 
 
-def upsert_project(slug: str, name: str = "", project_dir: str = "") -> dict:
+def projects_root() -> str:
+    """Thư mục gốc để clone project mới. Rỗng = default ngoài Orchestrator."""
+    return (load().get("projects_root") or "").strip()
+
+
+def set_projects_root(path: str) -> str:
+    from pathlib import Path
+    from .paths import default_projects_root
+
+    raw = (path or "").strip()
+    if not raw:
+        data = load()
+        data["projects_root"] = ""
+        save(data)
+        return str(default_projects_root())
+    p = Path(raw).expanduser()
+    p.mkdir(parents=True, exist_ok=True)
+    data = load()
+    data["projects_root"] = str(p)
+    save(data)
+    return str(p)
+
+
+def effective_projects_root() -> str:
+    from .paths import default_projects_root
+
+    custom = projects_root()
+    return custom if custom else str(default_projects_root())
+
+
+def pending_clone() -> dict | None:
+    p = load().get("pending_clone")
+    return p if isinstance(p, dict) and p.get("url") else None
+
+
+def set_pending_clone(payload: dict | None) -> None:
+    data = load()
+    data["pending_clone"] = payload
+    save(data)
+
+
+def clear_pending_clone() -> None:
+    set_pending_clone(None)
+
+
+def upsert_project(slug: str, name: str = "", project_dir: str = "", api_base: str = "") -> dict:
     """Tạo hoặc cập nhật project theo slug. Trả về project dict."""
     import re
     from pathlib import Path
+    from .paths import default_projects_root, is_plausible_fs_path
 
     slug = re.sub(r"[^a-z0-9]+", "-", (slug or "").lower()).strip("-")[:40] or "project"
+    # Không lưu path giả từ URL (https:// → s:\github.com\...)
+    if project_dir and not is_plausible_fs_path(project_dir):
+        project_dir = ""
+    api_base = (api_base or "").strip().rstrip("/")
+
     data = load()
     existing = {p["slug"]: p for p in data.get("projects", [])}
     if slug in existing:
@@ -138,14 +193,31 @@ def upsert_project(slug: str, name: str = "", project_dir: str = "") -> dict:
             p["name"] = name
         if project_dir:
             p["project_dir"] = project_dir
+        # Sửa project_dir hỏng đã lưu trước đó
+        elif p.get("project_dir") and not is_plausible_fs_path(p["project_dir"]):
+            root = projects_root() or str(default_projects_root())
+            p["project_dir"] = str(Path(root) / slug)
+        if api_base:
+            p["api_base"] = api_base
     else:
-        dir_path = project_dir or str(config.WORKSPACE_DIR / "projects" / slug)
-        Path(dir_path).mkdir(parents=True, exist_ok=True)
+        if project_dir:
+            dir_path = project_dir
+        else:
+            root = projects_root() or str(default_projects_root())
+            dir_path = str(Path(root) / slug)
+        try:
+            Path(dir_path).mkdir(parents=True, exist_ok=True)
+        except OSError:
+            root = projects_root() or str(default_projects_root())
+            dir_path = str(Path(root) / slug)
+            Path(dir_path).mkdir(parents=True, exist_ok=True)
         p = {
             "slug": slug,
             "name": name or slug,
             "project_dir": dir_path,
         }
+        if api_base:
+            p["api_base"] = api_base
         data.setdefault("projects", []).append(p)
     data["active_project"] = slug
     save(data)
@@ -173,6 +245,8 @@ def remove_project(slug: str) -> bool:
 
 def ensure_project_from_tasks(task_projects: list[tuple[str, str]]) -> None:
     """Đồng bộ project từ task board (slug, project_dir) vào settings nếu chưa có."""
+    from pathlib import Path
+
     data = load()
     existing = {p["slug"] for p in data.get("projects", [])}
     changed = False
@@ -182,7 +256,7 @@ def ensure_project_from_tasks(task_projects: list[tuple[str, str]]) -> None:
         data.setdefault("projects", []).append({
             "slug": slug,
             "name": slug,
-            "project_dir": project_dir or str(config.WORKSPACE_DIR / "projects" / slug),
+            "project_dir": project_dir or str(Path(effective_projects_root()) / slug),
         })
         existing.add(slug)
         changed = True

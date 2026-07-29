@@ -2,7 +2,7 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-STATUSES = ["backlog", "in_progress", "blocked", "testing", "review", "done", "archived"]
+STATUSES = ["backlog", "in_progress", "blocked", "testing", "review", "done", "failed", "archived"]
 
 TASK_TYPES = ["task", "bug"]
 REVIEW_TYPES = ["agent", "operator"]

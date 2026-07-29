@@ -210,6 +210,42 @@ def set_status(task_id: str, new_status: str, actor: str) -> TransitionResult:
     return result
 
 
+def archive_task(task_id: str, actor: str = "operator") -> TransitionResult:
+    """Archive task qua state machine (không bypass). Đi đường hợp lệ tới archived.
+
+    Chỉ backlog/done/failed → archived trực tiếp. Các trạng thái khác được
+    chuyển trung gian (vd in_progress→backlog→archived, testing→done→archived).
+    """
+    task = get_task(task_id)
+    if not task:
+        return TransitionResult("", False, f"Task {task_id} không tồn tại.")
+    if task.status == "archived":
+        return TransitionResult("archived", True)
+
+    # Bước trung gian về trạng thái được phép archive
+    if task.status == "in_progress":
+        set_status(task_id, "backlog", actor)
+    elif task.status == "blocked":
+        set_status(task_id, "backlog", actor)
+    elif task.status == "testing":
+        set_status(task_id, "done", actor)
+    elif task.status == "review":
+        set_status(task_id, "done", actor)
+
+    task = get_task(task_id)
+    if not task:
+        return TransitionResult("", False, f"Task {task_id} biến mất giữa chừng.")
+    if task.status == "archived":
+        return TransitionResult("archived", True)
+    if task.status not in ("backlog", "done", "failed"):
+        return TransitionResult(
+            task.status,
+            False,
+            f"Không archive được từ {task.status} — không có đường hợp lệ.",
+        )
+    return set_status(task_id, "archived", actor)
+
+
 def search_tasks(query: str, limit: int = 5) -> list[Task]:
     like = f"%{query}%"
     rows = _db().execute(

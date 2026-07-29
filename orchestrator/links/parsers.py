@@ -56,13 +56,21 @@ class GitHubParser(LinkParser):
         return (
             f"Repo GitHub: {link}. Hệ thống đã/ sẽ clone vào project dir. "
             "Dùng git_status xác nhận remote/branch; code TRÊN repo (không tạo tree song song). "
-            "Commit: run_command git add/commit. Push chỉ khi user yêu cầu. KHÔNG force push."
+            "PIPELINE BẮT BUỘC trước khi bàn giao: (1) npm/bun install nếu có package.json; "
+            "(2) build FE nếu Vite/React; (3) start backend/API nếu có (Express/server.ts/scripts.start) "
+            "bằng run_command nền; (4) http_get health/API trực tiếp + Live URL UI; "
+            "(5) SAME-ORIGIN: http_get /api/... trên host Live URL (preview) — path FE đang fetch. "
+            "Direct :3000 OK mà preview /api 404 = CHƯA XONG (proxy/api_base) — create_bug_ticket + hướng fix. "
+            "Không tự commit/push."
         )
 
     def steer_qa(self, parsed: dict[str, Any]) -> str:
         return (
             f"Repo: {parsed.get('clone_url') or parsed.get('url')}. "
-            "Verify trên codebase đã clone; git_status nếu cần."
+            "Verify trên codebase đã clone. Smoke BẮT BUỘC: Live URL UI 200 + "
+            "API direct (:3000/health…) + API SAME-ORIGIN trên host Live URL (/api/...). "
+            "Grep fetch('/api/') trong src. Chỉ UI/direct OK mà same-origin 404 → VERDICT: FAIL "
+            "+ create_bug_ticket (proxy/api_base/rewrite)."
         )
 
     def tags(self, parsed: dict[str, Any]) -> list[str]:
@@ -99,12 +107,16 @@ class GitLabParser(LinkParser):
     def steer_build(self, parsed: dict[str, Any]) -> str:
         link = parsed.get("url") or parsed.get("clone_url")
         return (
-            f"Repo GitLab: {link}. Clone vào project dir. "
-            "git_status rồi code trên repo. Commit qua run_command; push chỉ khi user yêu cầu."
+            f"Repo GitLab: {link}. Clone vào project dir. git_status rồi code trên repo. "
+            "PIPELINE: install → build FE → start API → http_get UI + API direct + API same-origin "
+            "trên host Live URL. Direct OK / preview /api 404 = chưa xong (proxy). Không tự commit/push."
         )
 
     def steer_qa(self, parsed: dict[str, Any]) -> str:
-        return f"Repo GitLab: {parsed.get('clone_url') or parsed.get('url')}. Verify trên codebase đã clone."
+        return (
+            f"Repo GitLab: {parsed.get('clone_url') or parsed.get('url')}. "
+            "Smoke UI + API direct + API same-origin trên Live host; lệch → VERDICT: FAIL + bug ticket."
+        )
 
     def tags(self, parsed: dict[str, Any]) -> list[str]:
         return ["git-repo", "gitlab"]

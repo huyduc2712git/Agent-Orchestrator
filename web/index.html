@@ -247,6 +247,7 @@
         <div class="modal-meta" id="modal-meta"></div>
         <div class="modal-actions" id="modal-actions"></div>
         <div class="modal-desc" id="modal-desc"></div>
+        <div class="modal-subtasks" id="modal-subtasks"></div>
         <div class="panel-title">Hoạt động</div>
         <div class="modal-events" id="modal-events"></div>
       </div>
@@ -272,6 +273,9 @@
           </button>
           <button type="button" class="settings-tab-btn" data-tab="tab-tokens">
             🔑 Figma & Git Access Tokens
+          </button>
+          <button type="button" class="settings-tab-btn" data-tab="tab-projects">
+            📁 Projects
           </button>
         </div>
 
@@ -331,6 +335,28 @@
           </div>
         </div>
 
+        <!-- TAB 3: PROJECTS ROOT -->
+        <div class="settings-tab-content hidden" id="tab-projects">
+          <div class="panel-section">
+            <div class="panel-title">Thư mục gốc clone (Projects root)</div>
+            <p class="settings-hint">
+              Repo Git được clone <strong>ngoài</strong> thư mục Orchestrator để tránh nặng workspace.
+              Khi chat clone mà không ghi path, Jarvis sẽ hỏi — hoặc dùng gốc này + tên project.
+            </p>
+            <form class="token-form" id="projects-root-form" style="flex-wrap: wrap;">
+              <input
+                type="text"
+                id="projects-root-input"
+                placeholder="vd: D:\Dev\AI-Projects"
+                style="flex: 1; min-width: 220px;"
+              />
+              <button type="submit">Lưu</button>
+              <button type="button" id="projects-root-reset" class="btn-secondary" title="Reset về mặc định">Mặc định</button>
+            </form>
+            <p class="settings-hint" id="projects-root-effective" style="margin-top: 10px;"></p>
+          </div>
+        </div>
+
         <div class="settings-msg" id="settings-msg"></div>
       </div>
     </div>
@@ -344,14 +370,19 @@
         </div>
         <p class="settings-hint">
           Tạo project trước, rồi chọn nó — mọi task mới từ Chat sẽ gắn vào
-          project đang chọn.
+          project đang chọn. Nên chỉ định thư mục ngoài Orchestrator (repo nặng).
         </p>
-        <form class="token-form" id="project-form">
+        <form class="token-form" id="project-form" style="flex-direction: column; align-items: stretch;">
           <input
             type="text"
             id="project-name"
             placeholder="Tên project (vd: jtshop)"
             required
+          />
+          <input
+            type="text"
+            id="project-dir"
+            placeholder="Thư mục làm việc (vd: D:\Dev\jtshop) — để trống = Projects root"
           />
           <button type="submit" id="project-add">Tạo</button>
         </form>
@@ -359,6 +390,6 @@
       </div>
     </div>
 
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=8"></script>
   </body>
 </html>

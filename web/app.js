@@ -3,7 +3,7 @@
 const COLUMNS = [
   { key: "backlog", label: "To Do / Backlog", headClass: "col-backlog", statuses: ["backlog"] },
   { key: "working", label: "In Progress", headClass: "col-working", statuses: ["in_progress"] },
-  { key: "blocked", label: "Needs Attention", headClass: "col-blocked", statuses: ["blocked"] },
+  { key: "blocked", label: "Needs Attention", headClass: "col-blocked", statuses: ["blocked", "failed"] },
   { key: "testing", label: "In Testing / QA", headClass: "col-testing", statuses: ["testing"] },
   { key: "review", label: "In Review", headClass: "col-review", statuses: ["review"] },
   { key: "done", label: "Done / Ready", headClass: "col-done", statuses: ["done"] },
@@ -64,6 +64,9 @@ const state = {
   thinking: false,
   activeProject: "",
   projects: [],
+  chatMessages: [],
+  plannerModel: "",
+  workStartedAt: null, // Date.now() khi user gửi, để badge live chính xác
 };
 const $ = (id) => document.getElementById(id);
 
@@ -132,15 +135,34 @@ function setThinking(on) {
 
 function formatMarkdownMessage(text) {
   if (!text) return "";
+  // Chuẩn hóa Live preview URL: luôn có trailing slash (tránh /preview/voxbeat → load sai)
+  text = text.replace(
+    /(https?:\/\/[^\s<>"']+\/preview\/[a-z0-9_-]+)(?![\w./#-])/gi,
+    "$1/"
+  );
+  text = text.replace(
+    /(https?:\/\/[^\s<>"']+\/preview\/[a-z0-9_-]+)(?=\s|$|[)\].,!])/gi,
+    (url) => (url.endsWith("/") ? url : url + "/")
+  );
   let html = escapeHtml(text);
+  // Autolink http(s)
+  html = html.replace(
+    /(https?:\/\/[^\s<]+)/gi,
+    (url) => {
+      let href = url;
+      const m = href.match(/^(https?:\/\/[^/]+\/preview\/[a-z0-9_-]+)\/?$/i);
+      if (m) href = m[1] + "/";
+      return `<a href="${href}" target="_blank" rel="noopener">${url}</a>`;
+    }
+  );
   // Bold **text**
-  html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
   // Italic *text*
-  html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
+  html = html.replace(/\*(.*?)\*/g, "<em>$1</em>");
   // Code `text`
   html = html.replace(/`(.*?)`/g, '<code class="chat-code">$1</code>');
   // Line breaks
-  html = html.replace(/\n/g, '<br/>');
+  html = html.replace(/\n/g, "<br/>");
   return html;
 }
 
@@ -151,11 +173,80 @@ function focusChatInput(prefix) {
   ta.focus();
 }
 
-function renderChatMessage(m) {
+function formatDurationPrecise(ms) {
+  if (ms == null || Number.isNaN(ms) || ms < 0) return "0s";
+  const sec = Math.max(0, Math.round(ms / 1000));
+  if (sec < 60) return `${sec}s`;
+  const min = Math.floor(sec / 60);
+  const s = sec % 60;
+  if (min < 60) return s ? `${min}m ${s}s` : `${min}m`;
+  const hr = Math.floor(min / 60);
+  const m = min % 60;
+  return m ? `${hr}h ${m}m` : `${hr}h`;
+}
+
+/** Worked badge: steps + thời gian thật từ tin user trước → phản hồi này. */
+function jarvisWorkStats(messages, index) {
+  const m = messages[index];
+  if (!m || (m.role !== "jarvis" && m.role !== "system")) return null;
+
+  let userIdx = -1;
+  for (let i = index - 1; i >= 0; i--) {
+    if (messages[i].role === "user") {
+      userIdx = i;
+      break;
+    }
+  }
+
+  let steps = 0;
+  for (let i = Math.max(0, userIdx + 1); i <= index; i++) {
+    if (messages[i].role !== "user") steps++;
+  }
+  if (steps < 1) steps = 1;
+
+  let durationMs = null;
+  const endAt = m.created_at ? new Date(m.created_at).getTime() : NaN;
+  if (userIdx >= 0 && messages[userIdx].created_at && !Number.isNaN(endAt)) {
+    durationMs = endAt - new Date(messages[userIdx].created_at).getTime();
+  } else if (state.workStartedAt && !Number.isNaN(endAt)) {
+    durationMs = endAt - state.workStartedAt;
+  } else if (state.workStartedAt) {
+    durationMs = Date.now() - state.workStartedAt;
+  }
+  if (durationMs != null && durationMs < 0) durationMs = 0;
+
+  return {
+    steps,
+    durationMs,
+    label: `Worked • ${steps} step${steps === 1 ? "" : "s"} • ${formatDurationPrecise(durationMs ?? 0)}`,
+  };
+}
+
+function plannerModelLabel() {
+  return (state.plannerModel || "").trim() || "planner";
+}
+
+function appendChatMessage(m) {
+  if (!m) return;
+  if (m.id != null && state.chatMessages.some((x) => x.id === m.id)) return;
+  state.chatMessages.push(m);
+  renderChatMessage(m, state.chatMessages.length - 1);
+}
+
+function renderChatMessage(m, index) {
   const box = $("chat-messages");
   if (!box) return;
+  if (index == null) {
+    index = state.chatMessages.findIndex((x) => x === m || (m.id != null && x.id === m.id));
+    if (index < 0) {
+      state.chatMessages.push(m);
+      index = state.chatMessages.length - 1;
+    }
+  }
+
   if (m.role === "system") {
-    const timeStr = formatTime(m.created_at) || "";
+    const timeStr = formatTime(m.created_at);
+    const work = jarvisWorkStats(state.chatMessages, index);
     const row = document.createElement("div");
     row.className = "msg-row system-msg";
     row.innerHTML = `
@@ -163,7 +254,8 @@ function renderChatMessage(m) {
       <div class="msg-jarvis-wrapper">
         <div class="msg-meta-jarvis">
           <span class="name" style="color: #eab308;">System / Board Patrol</span>
-          ${timeStr ? `<span class="dot">•</span><span class="time">${timeStr}</span>` : ''}
+          ${timeStr ? `<span class="dot">•</span><span class="time">${escapeHtml(timeStr)}</span>` : ""}
+          ${work ? `<span class="worked-badge" title="Thời gian thật từ tin nhắn user trước">${escapeHtml(work.label)}</span>` : ""}
           <span class="system-badge">System Notification</span>
         </div>
         <div class="msg-bubble system-bubble">${formatMarkdownMessage(m.message)}</div>
@@ -174,39 +266,36 @@ function renderChatMessage(m) {
     box.scrollTop = box.scrollHeight;
     return;
   }
+
   const isUser = m.role === "user";
   const row = document.createElement("div");
   row.className = `msg-row ${isUser ? "user" : "jarvis"}`;
-  
-  const timeStr = formatTime(m.created_at) || "12:42 PM";
+  const timeStr = formatTime(m.created_at);
 
   if (isUser) {
     row.innerHTML = `
       <div class="msg-user-wrapper">
         <div class="msg-meta-user">
-          <span class="time">${timeStr}</span>
-          <span class="dot">•</span>
+          ${timeStr ? `<span class="time">${escapeHtml(timeStr)}</span><span class="dot">•</span>` : ""}
           <span class="name">Bạn</span>
         </div>
         <div class="msg-bubble user-bubble">${formatMarkdownMessage(m.message)}</div>
       </div>
       <span class="avatar avatar-user">👤</span>`;
   } else {
+    const work = jarvisWorkStats(state.chatMessages, index);
     row.innerHTML = `
       <span class="avatar avatar-jarvis">🎯</span>
       <div class="msg-jarvis-wrapper">
         <div class="msg-meta-jarvis">
           <span class="name">Jarvis</span>
-          <span class="dot">•</span>
-          <span class="time">${timeStr}</span>
-          <span class="model-badge">deepseek/deepseek-v4-flash</span>
-          <span class="worked-badge">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
-            Worked • 1 step • 2s ∨
-          </span>
+          ${timeStr ? `<span class="dot">•</span><span class="time">${escapeHtml(timeStr)}</span>` : ""}
+          <span class="model-badge">${escapeHtml(plannerModelLabel())}</span>
+          ${work ? `<span class="worked-badge" title="Thời gian thật từ lúc bạn gửi đến phản hồi này">${escapeHtml(work.label)}</span>` : ""}
         </div>
         <div class="msg-bubble jarvis-bubble">${formatMarkdownMessage(m.message)}</div>
       </div>`;
+    if (state.workStartedAt) state.workStartedAt = null;
   }
   const thinkRow = $("thinking-row");
   if (thinkRow) box.insertBefore(row, thinkRow);
@@ -274,13 +363,14 @@ async function loadChat() {
   const res = await fetch("/api/chat");
   const data = await res.json();
   $("chat-messages").innerHTML = "";
-  if (!data.messages.length) {
+  state.chatMessages = data.messages || [];
+  if (!state.chatMessages.length) {
     const w = document.createElement("div");
     w.className = "msg-row jarvis";
     w.innerHTML = `<span class="avatar avatar-jarvis">🤖</span><div><div class="msg-bubble">Ask me something!</div></div>`;
     $("chat-messages").appendChild(w);
   } else {
-    data.messages.forEach(renderChatMessage);
+    state.chatMessages.forEach((m, i) => renderChatMessage(m, i));
   }
 }
 
@@ -296,6 +386,7 @@ $("chat-form").addEventListener("submit", async (e) => {
   ta.value = "";
   resetChatInputHeight();
   $("chat-send").disabled = true;
+  state.workStartedAt = Date.now();
   setThinking(true);
   try {
     await fetch("/api/chat", {
@@ -351,6 +442,7 @@ function pillFor(t, meta) {
   if (t.status === "backlog") return { cls: "pill-backlog", text: "To Do" };
   if (t.status === "in_progress") return { cls: "pill-working", text: "In Progress" };
   if (t.status === "blocked" && t.type === "bug") return { cls: "pill-failed", text: "CI Failed" };
+  if (t.status === "failed") return { cls: "pill-failed", text: "Failed" };
   if (t.status === "blocked") return { cls: "pill-changes", text: "Needs Attention" };
   if (t.status === "testing") return { cls: "pill-testing", text: "QA Testing" };
   if (t.status === "review") return { cls: "pill-review", text: "In Review" };
@@ -385,10 +477,10 @@ function metaRows(t, meta) {
 
   const pr = meta.pr ? meta.pr : (meta.pr_num ? `${meta.pr_num} · ${meta.pr_status || "open"}` : (t.status === "in_progress" || t.status === "backlog" ? "no PR yet" : `${t.id} · ${t.status === "done" ? "merged" : "open"}`));
   
-  let ci = meta.ci || (t.status === "done" ? "Passing" : t.status === "blocked" ? "Failing" : "Pending");
+  let ci = meta.ci || (t.status === "done" ? "Passing" : (t.status === "blocked" || t.status === "failed") ? "Failing" : "Pending");
   let ciCls = ci === "Passing" ? "pass" : ci === "Failing" ? "fail" : "dim";
 
-  let review = meta.review || (t.status === "done" ? "Approved" : t.status === "blocked" ? "Changes requested" : "None");
+  let review = meta.review || (t.status === "done" ? "Approved" : (t.status === "blocked" || t.status === "failed") ? "Changes requested" : "None");
   let revCls = review === "Approved" ? "pass" : review === "Changes requested" ? "warn" : "dim";
 
   let merge = meta.merge || (t.status === "done" ? "Mergeable" : "Checking");
@@ -401,9 +493,9 @@ function metaRows(t, meta) {
 }
 
 function attentionFor(t, meta) {
-  if (!meta.attention_title && t.status !== "blocked" && t.status !== "backlog") return "";
+  if (!meta.attention_title && t.status !== "blocked" && t.status !== "failed" && t.status !== "backlog") return "";
 
-  const title = meta.attention_title || (t.status === "blocked" ? (t.type === "bug" ? "Fix failing CI" : "Address requested changes") : "Waiting to start");
+  const title = meta.attention_title || ((t.status === "blocked" || t.status === "failed") ? (t.type === "bug" ? "Fix failing CI" : "Address requested changes") : "Waiting to start");
   
   let titleCls = "yellow";
   if (title.includes("failing") || title.includes("CI")) titleCls = "red";
@@ -423,6 +515,76 @@ function attentionFor(t, meta) {
     </div>`;
 }
 
+function childStatusMeta(status) {
+  let statusText = "To Do";
+  let subCls = "sub-backlog";
+  if (status === "in_progress") { statusText = "Running"; subCls = "sub-working"; }
+  else if (status === "testing") { statusText = "QA Testing"; subCls = "sub-testing"; }
+  else if (status === "review") { statusText = "In Review"; subCls = "sub-review"; }
+  else if (status === "done") { statusText = "Done ✓"; subCls = "sub-done"; }
+  else if (status === "blocked" || status === "failed") {
+    statusText = status === "failed" ? "Failed" : "Needs Attention";
+    subCls = "sub-blocked";
+  }
+  return { statusText, subCls };
+}
+
+function childrenOf(parentId) {
+  return [...state.tasks.values()]
+    .filter((c) => c.parent_id === parentId)
+    .sort((a, b) => String(a.id).localeCompare(String(b.id)));
+}
+
+function subtasksFor(t) {
+  const children = childrenOf(t.id);
+  const work = children.filter((c) => c.type !== "bug");
+  const bugs = children.filter((c) => c.type === "bug");
+  if (!work.length && !bugs.length) return "";
+
+  const renderRows = (list, kind) => list.map((sub, i) => {
+    const agentName = sub.assignee || "stark";
+    const info = AGENT_INFO[agentName.toLowerCase()] || { icon: "🤖" };
+    const { statusText, subCls } = childStatusMeta(sub.status);
+    const step = kind === "bug" ? (sub.id || `bug-${i + 1}`) : `#${i + 1}`;
+    return `
+      <div class="subtask-card-row ${subCls}${kind === "bug" ? " is-bug" : ""}">
+        <span class="subtask-dot"></span>
+        <span class="subtask-step">${escapeHtml(step)}</span>
+        <span class="subtask-title" title="${escapeHtml(sub.title)}">${escapeHtml(sub.title)}</span>
+        <span class="subtask-agent-tag">${info.icon} ${escapeHtml(agentName)}</span>
+        <span class="subtask-badge ${subCls}">${statusText}</span>
+      </div>`;
+  }).join("");
+
+  let html = "";
+  if (work.length) {
+    const completed = work.filter((c) => c.status === "done").length;
+    const percent = Math.round((completed / work.length) * 100);
+    html += `
+    <div class="task-card-subtasks">
+      <div class="subtasks-header">
+        <span class="subtasks-label">SUBTASKS (${completed}/${work.length})</span>
+        <span class="subtasks-pct">${percent}%</span>
+      </div>
+      <div class="subtasks-progress">
+        <div class="subtasks-fill" style="width: ${percent}%"></div>
+      </div>
+      <div class="subtasks-list">${renderRows(work, "task")}</div>
+    </div>`;
+  }
+  if (bugs.length) {
+    const open = bugs.filter((c) => c.status !== "done" && c.status !== "archived").length;
+    html += `
+    <div class="task-card-subtasks task-card-bugs">
+      <div class="subtasks-header">
+        <span class="subtasks-label">BUGS (${open} mở / ${bugs.length})</span>
+      </div>
+      <div class="subtasks-list">${renderRows(bugs, "bug")}</div>
+    </div>`;
+  }
+  return html;
+}
+
 function renderCard(t) {
   const card = document.createElement("div");
   card.className = "task-card";
@@ -437,13 +599,16 @@ function renderCard(t) {
   card.innerHTML = `
     <div class="task-card-head">
       <span class="pill ${pill.cls}"><span class="pill-dot"></span>${pill.text}</span>
-      ${cardTag(t)}
+      <div class="task-card-head-right">
+        ${timeBadge}
+        ${cardTag(t)}
+      </div>
     </div>
     <div class="task-card-title">${escapeHtml(t.title)}</div>
     <div class="task-card-path">${escapeHtml(path)}</div>
     <div class="task-card-meta">${metaRows(t, meta)}</div>
-    ${attentionFor(t, meta)}
-    ${timeBadge}`;
+    ${subtasksFor(t)}
+    ${attentionFor(t, meta)}`;
   return card;
 }
 
@@ -511,6 +676,7 @@ function renderSidebar() {
 
     const head = document.createElement("div");
     head.className = "project-name" + (state.activeProject === p.slug ? " selected" : "");
+    if (p.project_dir) head.title = p.project_dir;
     head.innerHTML = `
       <span class="chevron">▼</span>
       <span class="project-label">${escapeHtml(p.name || p.slug)}</span>
@@ -536,6 +702,7 @@ function renderSidebar() {
         let dotColor = "#9ba1aa";
         if (t.status === "in_progress") dotColor = "#b1763d";
         else if (t.status === "blocked" && t.type === "bug") dotColor = "#ef4444";
+        else if (t.status === "failed") dotColor = "#ef4444";
         else if (t.status === "blocked") dotColor = "#e8c14a";
         else if (t.status === "review" || t.status === "testing") dotColor = "#9ba1aa";
         else if (t.status === "done") dotColor = "#74b98a";
@@ -573,9 +740,13 @@ async function selectProject(slug) {
 
 async function removeProject(slug, label) {
   const taskCount = [...state.tasks.values()].filter((t) => !t.parent_id && t.project === slug).length;
+  const proj = state.projects.find((p) => p.slug === slug);
+  const dirHint = proj?.project_dir
+    ? `\nThư mục trên đĩa cũng sẽ bị xóa:\n${proj.project_dir}`
+    : "\nThư mục project trên đĩa (nếu có) cũng sẽ bị xóa.";
   const msg = taskCount
-    ? `Xóa project "${label}"?\n${taskCount} task sẽ bị archive và ẩn khỏi board.`
-    : `Xóa project "${label}"?`;
+    ? `Xóa project "${label}"?\n${taskCount} task sẽ bị archive và ẩn khỏi board.${dirHint}`
+    : `Xóa project "${label}"?${dirHint}`;
   if (!confirm(msg)) return;
   try {
     const res = await fetch(`/api/projects/${encodeURIComponent(slug)}`, { method: "DELETE" });
@@ -595,6 +766,9 @@ async function removeProject(slug, label) {
       state.openTaskId = null;
     }
     updateFooterProject();
+    if (data.dir_errors?.length) {
+      alert("Đã xóa project, nhưng một số thư mục chưa gỡ được:\n" + data.dir_errors.join("\n"));
+    }
     renderBoard();
   } catch (e) {
     alert("Lỗi khi xóa project: " + e);
@@ -619,13 +793,14 @@ $("project-backdrop")?.addEventListener("click", (e) => {
 $("project-form")?.addEventListener("submit", async (e) => {
   e.preventDefault();
   const name = $("project-name").value.trim();
+  const project_dir = ($("project-dir")?.value || "").trim();
   if (!name) return;
   $("project-add").disabled = true;
   try {
     const res = await fetch("/api/projects", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, project_dir }),
     });
     const data = await res.json();
     if (res.ok) {
@@ -633,6 +808,7 @@ $("project-form")?.addEventListener("submit", async (e) => {
       state.projects.push(data.project);
       state.activeProject = data.project.slug;
       $("project-name").value = "";
+      if ($("project-dir")) $("project-dir").value = "";
       $("project-backdrop").classList.add("hidden");
       updateFooterProject();
       renderBoard();
@@ -663,7 +839,7 @@ async function loadBoard() {
 /* ---------- Modal ---------- */
 
 const STATUS_LABEL = {
-  backlog: "Backlog", in_progress: "Working", blocked: "Blocked",
+  backlog: "Backlog", in_progress: "Working", blocked: "Blocked", failed: "Failed",
   testing: "Testing", review: "Review", done: "Done",
 };
 
@@ -685,13 +861,28 @@ async function openModal(taskId) {
 
   $("modal-title").textContent = t.title;
   const elapsed = taskElapsed(t);
-  const preview = t.project ? `${location.origin}/preview/${t.project}/` : "";
+  let liveLinks = [];
+  if (t.project) {
+    const basePrev = `${location.origin}/preview/${t.project}/`;
+    liveLinks.push(`<a href="${basePrev}" target="_blank">Trang chủ</a>`);
+
+    const pageMatch = (t.title + " " + (t.description || "")).match(/([a-z0-9_-]+\.html)/i);
+    if (pageMatch && pageMatch[1] !== "index.html") {
+      const pageFile = pageMatch[1];
+      const pagePrev = `${location.origin}/preview/${t.project}/${pageFile}`;
+      liveLinks.push(`<a href="${pagePrev}" target="_blank" style="color: #60a5fa; font-weight: 600;">🛍️ Live Page: ${pageFile}</a>`);
+    } else if (t.project === "jtshop-clone") {
+      const pagePrev = `${location.origin}/preview/${t.project}/product-detail.html`;
+      liveLinks.push(`<a href="${pagePrev}" target="_blank" style="color: #60a5fa; font-weight: 600;">🛍️ Live: product-detail.html</a>`);
+    }
+  }
+
   $("modal-meta").innerHTML = [
     elapsed ? `Thời gian: <b>${elapsed}</b>` : null,
     `Assignee: <b>${t.assignee || "—"}</b>`,
     `Project: <b>${t.project}</b>`,
     t.parent_id ? `Parent: <b>${t.parent_id}</b>` : null,
-    preview ? `Live: <a href="${preview}" target="_blank">${preview}</a>` : null,
+    liveLinks.length ? `Live: ${liveLinks.join(" | ")}` : null,
     data.deps.length ? `Deps: <b>${data.deps.map((d) => d.depends_on).join(", ")}</b>` : null,
   ].filter(Boolean).join(" · ");
 
@@ -704,7 +895,7 @@ async function openModal(taskId) {
     btn.onclick = async () => { await fetch(`/api/tasks/${t.id}/approve`, { method: "POST" }); openModal(t.id); };
     actions.appendChild(btn);
   }
-  if (t.status === "blocked") {
+  if (t.status === "blocked" || t.status === "failed") {
     const btn = document.createElement("button");
     btn.textContent = "↺ Chạy lại";
     btn.onclick = async () => { await fetch(`/api/tasks/${t.id}/rerun`, { method: "POST" }); openModal(t.id); };
@@ -712,6 +903,75 @@ async function openModal(taskId) {
   }
 
   $("modal-desc").textContent = t.description || "(không có mô tả)";
+
+  // Đồng bộ children từ API vào state (tránh modal trống nếu board state lệch)
+  const apiSubs = Array.isArray(data.subtasks) ? data.subtasks : [];
+  apiSubs.forEach((c) => state.tasks.set(c.id, c));
+
+  const subtasksEl = $("modal-subtasks");
+  if (subtasksEl) {
+    const children = (apiSubs.length
+      ? apiSubs
+      : [...state.tasks.values()].filter((c) => c.parent_id === t.id)
+    ).slice().sort((a, b) => String(a.id).localeCompare(String(b.id)));
+    const work = children.filter((c) => c.type !== "bug");
+    const bugs = children.filter((c) => c.type === "bug");
+
+    const rowHtml = (list, kind) => list.map((sub, i) => {
+      const agentName = sub.assignee || "stark";
+      const info = AGENT_INFO[agentName.toLowerCase()] || { icon: "🤖" };
+      let statusText = "To Do";
+      let subCls = "sub-backlog";
+      if (sub.status === "in_progress") { statusText = "In Progress (Đang thực thi...)"; subCls = "sub-working"; }
+      else if (sub.status === "testing") { statusText = "QA Testing (Kiểm thử)"; subCls = "sub-testing"; }
+      else if (sub.status === "review") { statusText = "In Review (Chờ review)"; subCls = "sub-review"; }
+      else if (sub.status === "done") { statusText = "Done (Hoàn tất ✓)"; subCls = "sub-done"; }
+      else if (sub.status === "blocked" || sub.status === "failed") {
+        statusText = sub.status === "failed" ? "Failed" : "Needs Attention";
+        subCls = "sub-blocked";
+      }
+      const label = kind === "bug"
+        ? `Bug ${escapeHtml(sub.id)}`
+        : `Subtask #${i + 1}`;
+      return `
+        <div class="modal-subtask-card ${subCls}${kind === "bug" ? " is-bug" : ""}">
+          <div class="subtask-top">
+            <span class="subtask-id">${label}</span>
+            <span class="subtask-agent">${info.icon} <b>${escapeHtml(agentName)}</b></span>
+            <span class="subtask-badge ${subCls}">${statusText}</span>
+          </div>
+          <div class="subtask-item-title">${escapeHtml(sub.title)}</div>
+        </div>`;
+    }).join("");
+
+    if (work.length || bugs.length) {
+      let body = "";
+      if (work.length) {
+        const completed = work.filter((c) => c.status === "done").length;
+        const pct = Math.round((completed / work.length) * 100);
+        body += `
+          <div class="panel-title" style="margin-top: 16px;">Subtasks (${completed}/${work.length} hoàn tất — ${pct}%)</div>
+          <div class="subtasks-progress" style="margin-bottom: 12px;">
+            <div class="subtasks-fill" style="width: ${pct}%"></div>
+          </div>
+          <div class="modal-subtasks-list">${rowHtml(work, "task")}</div>`;
+      }
+      if (bugs.length) {
+        const open = bugs.filter((c) => c.status !== "done" && c.status !== "archived").length;
+        body += `
+          <div class="panel-title" style="margin-top: 16px;">Bugs (${open} mở / ${bugs.length})</div>
+          <div class="modal-subtasks-list">${rowHtml(bugs, "bug")}</div>`;
+      }
+      subtasksEl.innerHTML = body;
+      subtasksEl.classList.remove("hidden");
+    } else {
+      subtasksEl.innerHTML = `
+        <div class="panel-title" style="margin-top: 16px;">Subtasks / Bugs</div>
+        <div class="sidebar-hint" style="padding: 8px 0;">Task này chưa có subtask hay bug.</div>`;
+      subtasksEl.classList.remove("hidden");
+    }
+  }
+
   $("modal-events").innerHTML = "";
   data.events.forEach((e) => $("modal-events").appendChild(renderEvent(e)));
   $("modal-backdrop").classList.remove("hidden");
@@ -720,6 +980,11 @@ async function openModal(taskId) {
 
 function formatEventMessage(msg) {
   if (!msg) return "";
+  // Preview URL thiếu slash → thêm (tránh /preview/slug load Vite source sai)
+  msg = String(msg).replace(
+    /(https?:\/\/[^\s<>"']+\/preview\/[a-z0-9_-]+)(?![\w./#-])/gi,
+    "$1/"
+  );
   let s = escapeHtml(msg);
   
   // Artifact screenshot URLs -> inline images with nice frame
@@ -727,6 +992,12 @@ function formatEventMessage(msg) {
     `<div class="qa-shot"><a href="${url}" target="_blank" class="qa-shot-link">📸 View Screenshot</a><img src="${url}" alt="screenshot" loading="lazy"/></div>`);
   s = s.replace(/(https?:\/\/[^\s<]+\/artifacts\/[^\s<]+\.png)/gi, (url) =>
     `<div class="qa-shot"><a href="${url}" target="_blank" class="qa-shot-link">📸 View Screenshot</a><img src="${url}" alt="screenshot" loading="lazy"/></div>`);
+
+  // Live preview links (sau escape)
+  s = s.replace(/(https?:\/\/[^\s<]+\/preview\/[a-z0-9_-]+\/?)/gi, (url) => {
+    let href = url.endsWith("/") ? url : url + "/";
+    return `<a href="${href}" target="_blank" rel="noopener">${url}</a>`;
+  });
 
   // Markdown Headers
   s = s.replace(/^### (.+)$/gm, '<h4 class="event-h3">$1</h4>');
@@ -840,6 +1111,15 @@ async function loadSettings() {
   const tools = data.llm_tools || [];
   const roles = data.role_models || {};
   const roleLabels = data.role_labels || {};
+
+  // Model planner thật cho badge chat
+  const jarvisAgent = (data.agents || []).find((a) => a.key === "jarvis");
+  if (jarvisAgent?.model) state.plannerModel = jarvisAgent.model;
+  else {
+    const plannerToolId = roles.planner;
+    const plannerTool = tools.find((t) => t.id === plannerToolId);
+    if (plannerTool?.model) state.plannerModel = plannerTool.model;
+  }
 
   // LLM tools list — hiện model + base_url + default badge
   const DEFAULT_MODELS = ["deepseek-v4-flash-free", "nemotron-3-ultra-free", "mimo-v2.5-free"];
@@ -969,6 +1249,17 @@ async function loadSettings() {
       };
     });
   }
+
+  const rootInput = $("projects-root-input");
+  const rootEff = $("projects-root-effective");
+  if (rootInput) {
+    rootInput.value = data.projects_root_custom || "";
+    rootInput.placeholder = data.projects_root || "D:\\…\\AI-Projects";
+  }
+  if (rootEff) {
+    rootEff.innerHTML = `Đang dùng: <code>${escapeHtml(data.projects_root || "")}</code>`
+      + (data.projects_root_custom ? "" : " (mặc định ngoài Orchestrator)");
+  }
 }
 function settingsMsg(text, ok) { const el = $("settings-msg"); el.textContent = text; el.className = "settings-msg " + (ok ? "ok" : "err"); }
 document.querySelectorAll(".settings-tab-btn").forEach((btn) => {
@@ -991,6 +1282,38 @@ document.querySelectorAll(".settings-tab-btn").forEach((btn) => {
 $("sidebar-settings-btn").onclick = openSettings;
 $("settings-close").onclick = () => $("settings-backdrop").classList.add("hidden");
 $("settings-backdrop").addEventListener("click", (e) => { if (e.target === $("settings-backdrop")) $("settings-close").onclick(); });
+
+$("projects-root-form")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const path = ($("projects-root-input")?.value || "").trim();
+  const res = await fetch("/api/settings/projects-root", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    settingsMsg(data.error || "Lỗi lưu Projects root", false);
+    return;
+  }
+  settingsMsg(`Đã lưu Projects root: ${data.projects_root}`, true);
+  loadSettings();
+});
+$("projects-root-reset")?.addEventListener("click", async () => {
+  const res = await fetch("/api/settings/projects-root", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path: "" }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    settingsMsg(data.error || "Lỗi", false);
+    return;
+  }
+  if ($("projects-root-input")) $("projects-root-input").value = "";
+  settingsMsg(`Reset về mặc định: ${data.projects_root}`, true);
+  loadSettings();
+});
 $("token-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const name = $("token-name").value.trim(), token = $("token-value").value.trim();
@@ -1015,7 +1338,7 @@ $("llm-tool-form")?.addEventListener("submit", async (e) => {
   const api_key = $("llm-api-key").value.trim();
   if (!base_url || !model || !api_key) return;
   $("llm-tool-add").disabled = true;
-  settingsMsg("Đang kiểm tra endpoint…", true);
+  settingsMsg("Đang kết nối kiểm tra endpoint…", true);
   try {
     const res = await fetch("/api/settings/llm-tools", {
       method: "POST",
@@ -1024,11 +1347,13 @@ $("llm-tool-form")?.addEventListener("submit", async (e) => {
     });
     const data = await res.json();
     if (res.ok) {
-      settingsMsg(`OK — đã thêm ${data.tool.model}`, true);
+      settingsMsg(`OK — Đã xác thực thành công & đã thêm ${data.tool.model}`, true);
       $("llm-model").value = "";
       $("llm-api-key").value = "";
       loadSettings();
-    } else settingsMsg(data.error || "Lỗi", false);
+    } else {
+      settingsMsg(data.error || "Lỗi khi kiểm tra Model", false);
+    }
   } finally {
     $("llm-tool-add").disabled = false;
   }
@@ -1069,7 +1394,7 @@ function connectWS() {
   ws.onmessage = (msg) => {
     const ev = JSON.parse(msg.data);
     if (ev.type === "chat") {
-      renderChatMessage(ev.message);
+      appendChatMessage(ev.message);
       notifyTab("chat");
     } else if (ev.type === "task_updated" || ev.type === "task_created") {
       if (ev.task) state.tasks.set(ev.task.id, ev.task);
@@ -1109,6 +1434,7 @@ function startDurationTicker() {
 switchView("board");
 loadChat();
 loadBoard();
+loadSettings();
 connectWS();
 startDurationTicker();
 resizeChatInput();
