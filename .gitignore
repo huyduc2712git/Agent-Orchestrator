@@ -7,6 +7,8 @@ workspace/board.db
 workspace/board.db-*
 workspace/artifacts/
 workspace/projects/
+workspace/orch-*.log
+workspace/*.log
 .venv/
 .pytest_cache/
 *.egg-info/
