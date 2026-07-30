@@ -70,6 +70,39 @@ const state = {
 };
 const $ = (id) => document.getElementById(id);
 
+function customConfirm(title, message, okText = "Đồng ý", okBg = "") {
+  return new Promise((resolve) => {
+    const backdrop = $("confirm-backdrop");
+    const titleEl = $("confirm-title");
+    const msgEl = $("confirm-msg");
+    const okBtn = $("confirm-ok-btn");
+    const cancelBtn = $("confirm-cancel-btn");
+    if (!backdrop) {
+      resolve(window.confirm(message));
+      return;
+    }
+    titleEl.textContent = title || "Xác nhận";
+    msgEl.innerHTML = (message || "").replace(
+      /"(tsk-[^"]+)"/g,
+      '<code style="color: #60a5fa; background: rgba(96, 165, 250, 0.15); border: 1px solid rgba(96, 165, 250, 0.35); padding: 2px 7px; border-radius: 5px; font-weight: 650; font-family: monospace; font-size: 0.9em; box-shadow: 0 0 8px rgba(96, 165, 250, 0.25);">"$1"</code>'
+    );
+    okBtn.textContent = okText;
+    if (okBg) okBtn.style.background = okBg;
+    else okBtn.style.background = "linear-gradient(135deg, #ef4444 0%, #dc2626 100%)";
+
+    const cleanup = (val) => {
+      backdrop.classList.add("hidden");
+      okBtn.onclick = null;
+      cancelBtn.onclick = null;
+      resolve(val);
+    };
+
+    okBtn.onclick = () => cleanup(true);
+    cancelBtn.onclick = () => cleanup(false);
+    backdrop.classList.remove("hidden");
+  });
+}
+
 /* ---------- Navigation ---------- */
 
 function switchView(view) {
@@ -451,7 +484,14 @@ function pillFor(t, meta) {
 }
 
 function cardTag(t) {
-  const assigneeName = t.assignee || "stark";
+  let assigneeName = t.assignee || "stark";
+  if (t.status === "testing" && assigneeName !== "hawkeye") {
+    assigneeName = "hawkeye";
+  } else if (t.status === "review" && assigneeName !== "jarvis" && assigneeName !== "pepper") {
+    assigneeName = "pepper";
+  } else if (t.status === "done") {
+    assigneeName = "jarvis";
+  }
   const agent = assigneeName.toLowerCase();
   const info = AGENT_INFO[agent] || { icon: "🤖" };
   return `<span class="card-agent-tag" title="${escapeHtml(assigneeName)}">${info.icon} ${escapeHtml(assigneeName)}</span>`;
@@ -516,17 +556,42 @@ function attentionFor(t, meta) {
 }
 
 function childStatusMeta(status) {
-  let statusText = "To Do";
+  let statusText = "Pending";
   let subCls = "sub-backlog";
   if (status === "in_progress") { statusText = "Running"; subCls = "sub-working"; }
   else if (status === "testing") { statusText = "QA Testing"; subCls = "sub-testing"; }
   else if (status === "review") { statusText = "In Review"; subCls = "sub-review"; }
   else if (status === "done") { statusText = "Done ✓"; subCls = "sub-done"; }
   else if (status === "blocked" || status === "failed") {
-    statusText = status === "failed" ? "Failed" : "Needs Attention";
+    statusText = status === "failed" ? "Failed" : "Blocked";
     subCls = "sub-blocked";
   }
   return { statusText, subCls };
+}
+
+function getProgressStyle(percent, hasOpenBugs) {
+  if (hasOpenBugs) {
+    return {
+      fill: "linear-gradient(90deg, #f87171, #ef4444)",
+      color: "#f87171"
+    };
+  }
+  if (percent === 100) {
+    return {
+      fill: "linear-gradient(90deg, #34d399, #10b981)",
+      color: "#34d399"
+    };
+  }
+  if (percent > 30) {
+    return {
+      fill: "linear-gradient(90deg, #fb923c, #f59e0b)",
+      color: "#fb923c"
+    };
+  }
+  return {
+    fill: "linear-gradient(90deg, #38bdf8, #60a5fa)",
+    color: "#38bdf8"
+  };
 }
 
 function childrenOf(parentId) {
@@ -542,32 +607,40 @@ function subtasksFor(t) {
   if (!work.length && !bugs.length) return "";
 
   const renderRows = (list, kind) => list.map((sub, i) => {
-    const agentName = sub.assignee || "stark";
+    let agentName = sub.assignee || "stark";
+    if (sub.status === "testing" && agentName !== "hawkeye") {
+      agentName = "hawkeye";
+    } else if (sub.status === "review" && agentName !== "jarvis" && agentName !== "pepper") {
+      agentName = "pepper";
+    }
     const info = AGENT_INFO[agentName.toLowerCase()] || { icon: "🤖" };
     const { statusText, subCls } = childStatusMeta(sub.status);
-    const step = kind === "bug" ? (sub.id || `bug-${i + 1}`) : `#${i + 1}`;
+    const step = sub.id || (kind === "bug" ? `bug-${i + 1}` : `#${i + 1}`);
+
     return `
       <div class="subtask-card-row ${subCls}${kind === "bug" ? " is-bug" : ""}">
         <span class="subtask-dot"></span>
         <span class="subtask-step">${escapeHtml(step)}</span>
         <span class="subtask-title" title="${escapeHtml(sub.title)}">${escapeHtml(sub.title)}</span>
-        <span class="subtask-agent-tag">${info.icon} ${escapeHtml(agentName)}</span>
+        <span class="subtask-agent-tag"><span class="subtask-agent-icon">${info.icon}</span> ${escapeHtml(agentName)}</span>
         <span class="subtask-badge ${subCls}">${statusText}</span>
       </div>`;
   }).join("");
 
   let html = "";
   if (work.length) {
-    const completed = work.filter((c) => c.status === "done").length;
+    const completed = work.filter((c) => c.status === "done" || c.status === "testing" || c.status === "review").length;
     const percent = Math.round((completed / work.length) * 100);
+    const hasOpenBugs = bugs.some((b) => b.status !== "done" && b.status !== "archived");
+    const pStyle = getProgressStyle(percent, hasOpenBugs);
     html += `
     <div class="task-card-subtasks">
       <div class="subtasks-header">
         <span class="subtasks-label">SUBTASKS (${completed}/${work.length})</span>
-        <span class="subtasks-pct">${percent}%</span>
+        <span class="subtasks-pct" style="color: ${pStyle.color}">${percent}%</span>
       </div>
       <div class="subtasks-progress">
-        <div class="subtasks-fill" style="width: ${percent}%"></div>
+        <div class="subtasks-fill" style="width: ${percent}%; background: ${pStyle.fill}"></div>
       </div>
       <div class="subtasks-list">${renderRows(work, "task")}</div>
     </div>`;
@@ -585,6 +658,25 @@ function subtasksFor(t) {
   return html;
 }
 
+async function blockTask(taskId) {
+  try {
+    const res = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/block`, { method: "POST" });
+    const data = await res.json();
+    if (res.ok && data.accepted) {
+      await loadBoard();
+      const modal = $("modal-task-detail");
+      if (modal && modal.style.display !== "none") {
+        openModal(taskId);
+      }
+    } else {
+      console.warn("blockTask failed/not accepted:", data);
+    }
+  } catch (err) {
+    console.error("Failed to block task:", err);
+  }
+}
+window.blockTask = blockTask;
+
 function renderCard(t) {
   const card = document.createElement("div");
   card.className = "task-card";
@@ -596,12 +688,16 @@ function renderCard(t) {
     : `demo/${t.project}`);
   const elapsed = taskElapsed(t);
   const timeBadge = elapsed ? `<span class="task-card-time" title="Thời gian tổng">⏱ ${elapsed}</span>` : "";
+  const canBlock = !["done", "archived", "blocked"].includes(t.status);
+  const blockBtn = canBlock ? `<button class="btn-task-block" onclick="event.stopPropagation(); blockTask('${t.id}')" title="Dừng & Chuyển sang Blocked để kiểm tra">✕</button>` : "";
+
   card.innerHTML = `
     <div class="task-card-head">
       <span class="pill ${pill.cls}"><span class="pill-dot"></span>${pill.text}</span>
       <div class="task-card-head-right">
         ${timeBadge}
         ${cardTag(t)}
+        ${blockBtn}
       </div>
     </div>
     <div class="task-card-title">${escapeHtml(t.title)}</div>
@@ -619,6 +715,13 @@ function renderBoard() {
   if (state.activeProject) {
     parents = parents.filter((t) => t.project === state.activeProject);
   }
+
+  // Sắp xếp task mới nhất (theo thời gian tạo) lên trên
+  parents.sort((a, b) => {
+    const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+    const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+    return timeA === timeB ? String(b.id).localeCompare(String(a.id)) : timeB - timeA;
+  });
 
   for (const col of COLUMNS) {
     const colEl = document.createElement("div");
@@ -644,6 +747,23 @@ function renderBoard() {
   }
   updateFooterProject();
   renderSidebar();
+}
+
+function getProjectIcon(p) {
+  const provider = p.git_info?.provider || "none";
+  if (provider === "github") {
+    return `<span class="git-icon github-icon" title="GitHub Repository (${escapeHtml(p.git_info?.remote_url || '')})">🐙</span>`;
+  }
+  if (provider === "gitlab") {
+    return `<span class="git-icon gitlab-icon" title="GitLab Repository (${escapeHtml(p.git_info?.remote_url || '')})">🦊</span>`;
+  }
+  if (provider === "bitbucket") {
+    return `<span class="git-icon bitbucket-icon" title="Bitbucket Repository (${escapeHtml(p.git_info?.remote_url || '')})">🪣</span>`;
+  }
+  if (provider === "git" || p.git_info?.is_git_repo) {
+    return `<span class="git-icon git-icon-generic" title="Git Repository (${escapeHtml(p.git_info?.remote_url || '')})">🌐</span>`;
+  }
+  return `<span class="project-folder-icon" title="Local Folder">📁</span>`;
 }
 
 function updateFooterProject() {
@@ -679,6 +799,7 @@ function renderSidebar() {
     if (p.project_dir) head.title = p.project_dir;
     head.innerHTML = `
       <span class="chevron">▼</span>
+      ${getProjectIcon(p)}
       <span class="project-label">${escapeHtml(p.name || p.slug)}</span>
       <button class="project-remove" title="Xóa project" type="button">×</button>`;
     head.querySelector(".project-label").onclick = (e) => { e.stopPropagation(); selectProject(p.slug); };
@@ -689,27 +810,38 @@ function renderSidebar() {
     };
     group.appendChild(head);
 
+    const isCompact = document.body.classList.contains("sidebar-collapsed") || window.innerWidth <= 768;
     const list = document.createElement("div");
     list.className = "project-tasks";
-    const parents = [...state.tasks.values()].filter((t) => !t.parent_id && t.project === p.slug);
-    if (!parents.length) {
-      list.innerHTML = '<div class="sidebar-hint" style="padding-left:20px">Chưa có task</div>';
+    if (!isExpanded || isCompact) {
+      list.style.display = "none";
     } else {
-      for (const t of parents) {
-        const item = document.createElement("div");
-        item.className = "sidebar-task" + (state.openTaskId === t.id ? " active" : "");
-        
-        let dotColor = "#9ba1aa";
-        if (t.status === "in_progress") dotColor = "#b1763d";
-        else if (t.status === "blocked" && t.type === "bug") dotColor = "#ef4444";
-        else if (t.status === "failed") dotColor = "#ef4444";
-        else if (t.status === "blocked") dotColor = "#e8c14a";
-        else if (t.status === "review" || t.status === "testing") dotColor = "#9ba1aa";
-        else if (t.status === "done") dotColor = "#74b98a";
+      const parents = [...state.tasks.values()]
+        .filter((t) => !t.parent_id && t.project === p.slug)
+        .sort((a, b) => {
+          const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+          const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+          return timeA === timeB ? String(b.id).localeCompare(String(a.id)) : timeB - timeA;
+        });
+      if (!parents.length) {
+        list.innerHTML = '<div class="sidebar-hint" style="padding-left:20px">Chưa có task</div>';
+      } else {
+        for (const t of parents) {
+          const item = document.createElement("div");
+          item.className = "sidebar-task" + (state.openTaskId === t.id ? " active" : "");
+          
+          let dotColor = "#9ba1aa";
+          if (t.status === "in_progress") dotColor = "#b1763d";
+          else if (t.status === "blocked" && t.type === "bug") dotColor = "#ef4444";
+          else if (t.status === "failed") dotColor = "#ef4444";
+          else if (t.status === "blocked") dotColor = "#e8c14a";
+          else if (t.status === "review" || t.status === "testing") dotColor = "#9ba1aa";
+          else if (t.status === "done") dotColor = "#74b98a";
 
-        item.innerHTML = `<span class="dot" style="background:${dotColor}"></span><span class="label">${escapeHtml(t.title)}</span>`;
-        item.onclick = (e) => { e.stopPropagation(); selectProject(p.slug); switchView("board"); };
-        list.appendChild(item);
+          item.innerHTML = `<span class="dot" style="background:${dotColor}"></span><span class="label">${escapeHtml(t.title)}</span>`;
+          item.onclick = (e) => { e.stopPropagation(); selectProject(p.slug); switchView("board"); };
+          list.appendChild(item);
+        }
       }
     }
     group.appendChild(list);
@@ -726,6 +858,7 @@ async function loadProjects() {
     else if (!state.activeProject && state.projects.length) {
       state.activeProject = state.projects[0].slug;
     }
+    renderProjects();
   } catch { /* ignore */ }
 }
 
@@ -900,6 +1033,82 @@ async function openModal(taskId) {
     btn.textContent = "↺ Chạy lại";
     btn.onclick = async () => { await fetch(`/api/tasks/${t.id}/rerun`, { method: "POST" }); openModal(t.id); };
     actions.appendChild(btn);
+  } else if (!["done", "archived"].includes(t.status)) {
+    const blockBtn = document.createElement("button");
+    blockBtn.style.color = "#f87171";
+    blockBtn.style.borderColor = "rgba(239, 68, 68, 0.4)";
+    blockBtn.textContent = "🛑 Dừng task (Block)";
+    blockBtn.onclick = async () => { await blockTask(t.id); };
+    actions.appendChild(blockBtn);
+  }
+
+  // Nút Push Git cho Operator (chỉ hiển thị khi Task đã DONE và CÓ file chưa push)
+  const isGitRepo = data.task?.git_info?.is_git_repo || t.git_info?.is_git_repo;
+  const hasChanges = data.task?.git_info?.has_uncommitted_changes || t.git_info?.has_uncommitted_changes;
+
+  if (t.status === "done" && isGitRepo && hasChanges) {
+    const gitBtn = document.createElement("button");
+    gitBtn.className = "btn-git-push has-pending";
+    gitBtn.innerHTML = "🚀 Push Git (Có file mới)";
+    gitBtn.title = "Có file code chưa commit/push lên Git";
+    gitBtn.onclick = async (e) => {
+      e.stopPropagation();
+      const msg = prompt(`Nhập Git Commit Message (để trống = tự động):`, `feat: ${t.title}`);
+      if (msg === null) return;
+      gitBtn.disabled = true;
+      gitBtn.textContent = "⏳ Đang push...";
+      try {
+        const res = await fetch(`/api/tasks/${t.id}/git-push`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: msg })
+        });
+        const resData = await res.json();
+        if (res.ok) {
+          alert(`✅ Git Commit & Push Thành Công!\nCommit: ${resData.commit}`);
+        } else {
+          alert(`ℹ️ Thông báo Git: ${resData.error || "Lỗi không xác định"}`);
+        }
+      } catch (err) {
+        alert(`❌ Lỗi kết nối: ${err.message}`);
+      } finally {
+        openModal(t.id);
+      }
+    };
+    actions.appendChild(gitBtn);
+  }
+
+  // Nút Hủy & Rollback Git về Blocked (Nếu DONE: chỉ hiện khi có file code chưa đồng bộ)
+  const canRollback = !["archived", "blocked", "failed"].includes(t.status) && (t.status !== "done" || hasChanges);
+  if (canRollback) {
+    const rbBtn = document.createElement("button");
+    rbBtn.className = "btn-rollback";
+    rbBtn.textContent = "↩ Hủy & Rollback Git (Về Blocked)";
+    rbBtn.title = "Hủy toàn bộ thay đổi code trên Git và chuyển trạng thái task về Blocked";
+    rbBtn.onclick = async (e) => {
+      e.stopPropagation();
+      const ok = await customConfirm(
+        "Hủy & Rollback Code",
+        `Bạn có chắc chắn muốn HỦY toàn bộ thay đổi code trên Git và chuyển task "${t.id}" về trạng thái Blocked không?`,
+        "Hủy code & Về Blocked"
+      );
+      if (!ok) return;
+      rbBtn.disabled = true;
+      rbBtn.textContent = "⏳ Đang rollback...";
+      try {
+        const res = await fetch(`/api/tasks/${t.id}/reject-rollback`, { method: "POST" });
+        const resData = await res.json();
+        if (!res.ok) {
+          alert(`⚠️ Lỗi: ${resData.error || "Không thể rollback"}`);
+        }
+      } catch (err) {
+        alert(`❌ Lỗi kết nối: ${err.message}`);
+      } finally {
+        openModal(t.id);
+        if (typeof fetchBoard === "function") fetchBoard();
+      }
+    };
+    actions.appendChild(rbBtn);
   }
 
   $("modal-desc").textContent = t.description || "(không có mô tả)";
@@ -918,41 +1127,37 @@ async function openModal(taskId) {
     const bugs = children.filter((c) => c.type === "bug");
 
     const rowHtml = (list, kind) => list.map((sub, i) => {
-      const agentName = sub.assignee || "stark";
-      const info = AGENT_INFO[agentName.toLowerCase()] || { icon: "🤖" };
-      let statusText = "To Do";
-      let subCls = "sub-backlog";
-      if (sub.status === "in_progress") { statusText = "In Progress (Đang thực thi...)"; subCls = "sub-working"; }
-      else if (sub.status === "testing") { statusText = "QA Testing (Kiểm thử)"; subCls = "sub-testing"; }
-      else if (sub.status === "review") { statusText = "In Review (Chờ review)"; subCls = "sub-review"; }
-      else if (sub.status === "done") { statusText = "Done (Hoàn tất ✓)"; subCls = "sub-done"; }
-      else if (sub.status === "blocked" || sub.status === "failed") {
-        statusText = sub.status === "failed" ? "Failed" : "Needs Attention";
-        subCls = "sub-blocked";
+      let agentName = sub.assignee || "stark";
+      if (sub.status === "testing" && agentName !== "hawkeye") {
+        agentName = "hawkeye";
+      } else if (sub.status === "review" && agentName !== "jarvis" && agentName !== "pepper") {
+        agentName = "pepper";
       }
-      const label = kind === "bug"
-        ? `Bug ${escapeHtml(sub.id)}`
-        : `Subtask #${i + 1}`;
+      const info = AGENT_INFO[agentName.toLowerCase()] || { icon: "🤖" };
+      const { statusText, subCls } = childStatusMeta(sub.status);
+      const label = sub.id ? sub.id : (kind === "bug" ? `Bug #${i + 1}` : `Subtask #${i + 1}`);
       return `
         <div class="modal-subtask-card ${subCls}${kind === "bug" ? " is-bug" : ""}">
-          <div class="subtask-top">
+          <div class="subtask-info">
             <span class="subtask-id">${label}</span>
-            <span class="subtask-agent">${info.icon} <b>${escapeHtml(agentName)}</b></span>
-            <span class="subtask-badge ${subCls}">${statusText}</span>
+            <div class="subtask-item-title">${escapeHtml(sub.title)}</div>
           </div>
-          <div class="subtask-item-title">${escapeHtml(sub.title)}</div>
+          <span class="subtask-agent"><span class="subtask-agent-icon">${info.icon}</span> <b>${escapeHtml(agentName)}</b></span>
+          <span class="subtask-badge ${subCls}">${statusText}</span>
         </div>`;
     }).join("");
 
     if (work.length || bugs.length) {
       let body = "";
       if (work.length) {
-        const completed = work.filter((c) => c.status === "done").length;
+        const completed = work.filter((c) => c.status === "done" || c.status === "testing" || c.status === "review").length;
         const pct = Math.round((completed / work.length) * 100);
+        const hasOpenBugs = bugs.some((b) => b.status !== "done" && b.status !== "archived");
+        const pStyle = getProgressStyle(pct, hasOpenBugs);
         body += `
-          <div class="panel-title" style="margin-top: 16px;">Subtasks (${completed}/${work.length} hoàn tất — ${pct}%)</div>
+          <div class="panel-title" style="margin-top: 16px;">Subtasks (${completed}/${work.length} hoàn tất — <span style="color: ${pStyle.color}">${pct}%</span>)</div>
           <div class="subtasks-progress" style="margin-bottom: 12px;">
-            <div class="subtasks-fill" style="width: ${pct}%"></div>
+            <div class="subtasks-fill" style="width: ${pct}%; background: ${pStyle.fill}"></div>
           </div>
           <div class="modal-subtasks-list">${rowHtml(work, "task")}</div>`;
       }
@@ -975,6 +1180,7 @@ async function openModal(taskId) {
   $("modal-events").innerHTML = "";
   data.events.forEach((e) => $("modal-events").appendChild(renderEvent(e)));
   $("modal-backdrop").classList.remove("hidden");
+  setupModalScroll();
   renderSidebar();
 }
 
@@ -1438,3 +1644,59 @@ loadSettings();
 connectWS();
 startDurationTicker();
 resizeChatInput();
+setupModalScroll();
+
+/* ---------- Modal Quick Scroll Controls ---------- */
+function setupModalScroll() {
+  const modalEl = $("modal");
+  if (!modalEl) return;
+
+  const toggleBtn = $("modal-scroll-toggle");
+  if (toggleBtn) {
+    toggleBtn.onclick = (e) => {
+      if (e) { e.preventDefault(); e.stopPropagation(); }
+      // If modal is scrolled down > 100px, scroll to top; else scroll to bottom
+      if (modalEl.scrollTop > 100) {
+        modalEl.scrollTo({ top: 0, behavior: "smooth" });
+      } else {
+        modalEl.scrollTo({ top: modalEl.scrollHeight, behavior: "smooth" });
+      }
+    };
+  }
+
+  const scrollToTop = (e) => {
+    if (e) { e.preventDefault(); e.stopPropagation(); }
+    modalEl.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const scrollToBottom = (e) => {
+    if (e) { e.preventDefault(); e.stopPropagation(); }
+    modalEl.scrollTo({ top: modalEl.scrollHeight, behavior: "smooth" });
+  };
+
+  const topHdr = $("modal-scroll-top-hdr");
+  const btmHdr = $("modal-scroll-bottom-hdr");
+  const topBtn = $("modal-scroll-top");
+  const btmBtn = $("modal-scroll-bottom");
+
+  if (topHdr) topHdr.onclick = scrollToTop;
+  if (btmHdr) btmHdr.onclick = scrollToBottom;
+  if (topBtn) topBtn.onclick = scrollToTop;
+  if (btmBtn) btmBtn.onclick = scrollToBottom;
+}
+
+document.addEventListener("keydown", (e) => {
+  const modalBackdrop = $("modal-backdrop");
+  if (!modalBackdrop || modalBackdrop.classList.contains("hidden")) return;
+  const tag = document.activeElement?.tagName?.toLowerCase();
+  if (tag === "input" || tag === "textarea") return;
+
+  const modalEl = $("modal");
+  if (e.key === "Home") {
+    e.preventDefault();
+    modalEl?.scrollTo({ top: 0, behavior: "smooth" });
+  } else if (e.key === "End") {
+    e.preventDefault();
+    modalEl?.scrollTo({ top: modalEl?.scrollHeight || 999999, behavior: "smooth" });
+  }
+});

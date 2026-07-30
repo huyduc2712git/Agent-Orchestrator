@@ -2,6 +2,8 @@
 import asyncio
 import json
 import logging
+import os
+import subprocess
 from pathlib import Path
 
 import uvicorn
@@ -25,12 +27,110 @@ log = logging.getLogger("api")
 
 from contextlib import asynccontextmanager
 
+# ---------- Auto-start backend cho active project ----------
+
+_backend_procs: dict[str, subprocess.Popen] = {}  # slug → Popen
+
+
+def _is_backend_alive(slug: str) -> bool:
+    """Kiểm tra process đã start cho slug còn sống không."""
+    proc = _backend_procs.get(slug)
+    return bool(proc and proc.poll() is None)
+
+
+async def _probe_port(port: int) -> bool:
+    """Kiểm tra nhanh xem port đã có service chưa."""
+    import socket
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+            return True
+    except Exception:
+        return False
+
+
+def _stop_backend(slug: str) -> None:
+    """Tắt backend process cho một project."""
+    proc = _backend_procs.pop(slug, None)
+    if proc and proc.poll() is None:
+        log.info("Stopping backend '%s' (pid=%s)", slug, proc.pid)
+        try:
+            proc.terminate()
+            proc.wait(timeout=5)
+        except Exception:
+            proc.kill()
+
+
+async def _start_backend(slug: str) -> bool:
+    """Start backend cho project slug nếu có start_command. Trả True nếu đã start."""
+    proj = settings.get_project(slug)
+    if not proj:
+        return False
+
+    start_cmd = (proj.get("start_command") or "").strip()
+    project_dir = Path(proj.get("project_dir", ""))
+    if not start_cmd or not project_dir.exists():
+        return False
+
+    # Đã có process đang chạy → bỏ qua
+    if _is_backend_alive(slug):
+        log.info("Backend '%s' đã chạy (pid=%s), bỏ qua", slug, _backend_procs[slug].pid)
+        return True
+
+    # Kiểm tra port đã có service chưa (user tự chạy bên ngoài)
+    api_base = (proj.get("api_base") or "").strip()
+    if api_base:
+        port_match = re.search(r":(\d+)", api_base)
+        if port_match and await _probe_port(int(port_match.group(1))):
+            log.info("Backend '%s' đã có service trên %s, bỏ qua", slug, api_base)
+            return True
+
+    log.info("Starting backend cho project '%s': %s (cwd=%s)", slug, start_cmd, project_dir)
+    try:
+        creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+        proc = subprocess.Popen(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", start_cmd] if os.name == "nt"
+            else ["sh", "-c", start_cmd],
+            cwd=str(project_dir),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            creationflags=creationflags,
+        )
+        _backend_procs[slug] = proc
+        log.info("Backend '%s' started (pid=%s) — %s", slug, proc.pid, start_cmd)
+        return True
+    except Exception as e:
+        log.warning("Không thể start backend '%s': %s", slug, e)
+        return False
+
+
+async def switch_backend(new_slug: str) -> None:
+    """Tắt backend project cũ, bật backend project mới (nếu có start_command)."""
+    # Tắt tất cả backend đang chạy mà không phải project mới
+    for slug in list(_backend_procs.keys()):
+        if slug != new_slug:
+            _stop_backend(slug)
+    # Bật backend cho project mới
+    if new_slug:
+        await _start_backend(new_slug)
+
+
+def _shutdown_all_backends() -> None:
+    """Dọn dẹp tất cả backend processes khi Orchestrator tắt."""
+    for slug in list(_backend_procs.keys()):
+        _stop_backend(slug)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     asyncio.create_task(scheduler_loop())
     asyncio.create_task(patrol_loop())
+    # Auto-start backend cho active project (nếu có start_command)
+    active = settings.active_project()
+    if active:
+        await _start_backend(active)
     yield
+    _shutdown_all_backends()
 
 
 app = FastAPI(title="AI Orchestrator", lifespan=lifespan)
@@ -92,6 +192,44 @@ class ProjectIn(BaseModel):
     project_dir: str = ""
 
 
+def get_git_info(project_dir: str) -> dict:
+    if not project_dir or not os.path.exists(os.path.join(project_dir, ".git")):
+        return {"is_git_repo": False, "has_uncommitted_changes": False, "provider": "none", "remote_url": ""}
+    try:
+        res = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            cwd=project_dir, capture_output=True, text=True, check=False, timeout=3
+        )
+        remote_url = res.stdout.strip()
+        url_lower = remote_url.lower()
+        if "github" in url_lower:
+            provider = "github"
+        elif "gitlab" in url_lower:
+            provider = "gitlab"
+        elif "bitbucket" in url_lower:
+            provider = "bitbucket"
+        elif remote_url:
+            provider = "git"
+        else:
+            provider = "git"
+
+        # Kiểm tra xem thực tế có code bị chỉnh sửa/chưa commit hay không
+        st_res = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=project_dir, capture_output=True, text=True, check=False, timeout=3
+        )
+        has_uncommitted_changes = bool(st_res.stdout.strip())
+
+        return {
+            "is_git_repo": True,
+            "has_uncommitted_changes": has_uncommitted_changes,
+            "provider": provider,
+            "remote_url": remote_url
+        }
+    except Exception:
+        return {"is_git_repo": True, "has_uncommitted_changes": False, "provider": "git", "remote_url": ""}
+
+
 @app.get("/api/projects")
 async def list_projects():
     # Chỉ đồng bộ từ task chưa archived — project đã remove không bị hiện lại
@@ -100,8 +238,11 @@ async def list_projects():
         if t.project and t.project not in seen:
             seen[t.project] = t.project_dir or ""
     settings.ensure_project_from_tasks(list(seen.items()))
+    projs = settings.projects()
+    for p in projs:
+        p["git_info"] = get_git_info(p.get("project_dir") or "")
     return {
-        "projects": settings.projects(),
+        "projects": projs,
         "active_project": settings.active_project(),
         "projects_root": settings.effective_projects_root(),
         "projects_root_custom": settings.projects_root(),
@@ -157,7 +298,20 @@ async def select_project(slug: str):
     if not p:
         return JSONResponse({"error": "project không tồn tại"}, status_code=404)
     settings.set_active_project(slug)
+    # Tắt backend project cũ, bật backend project mới (nếu có start_command)
+    await switch_backend(slug)
     return {"ok": True, "active_project": slug, "project": p}
+
+
+@app.post("/api/projects/{slug}/restart-backend")
+async def restart_project_backend(slug: str):
+    """Khởi động lại backend server cho project slug."""
+    p = settings.get_project(slug)
+    if not p:
+        return JSONResponse({"error": "project không tồn tại"}, status_code=404)
+    _stop_backend(slug)
+    started = await _start_backend(slug)
+    return {"ok": True, "project": slug, "backend_started": started}
 
 
 @app.delete("/api/projects/{slug}")
@@ -171,6 +325,9 @@ async def delete_project(slug: str):
     tasks = [t for t in all_tasks if t.status != "archived"]
     if not p and not all_tasks:
         return JSONResponse({"error": "project không tồn tại"}, status_code=404)
+
+    # Tắt backend process nếu đang chạy
+    _stop_backend(slug)
 
     # Thu thập mọi project_dir liên quan
     dirs: list[str] = []
@@ -238,8 +395,11 @@ async def get_task(task_id: str):
     if not task:
         return JSONResponse({"error": "not found"}, status_code=404)
     children = store.list_tasks(parent_id=task_id)
+    t_dict = task.to_dict()
+    p_dir = task.project_dir or os.path.join(config.PROJECTS_DIR, task.project)
+    t_dict["git_info"] = get_git_info(p_dir)
     return {
-        "task": task.to_dict(),
+        "task": t_dict,
         "subtasks": [c.to_dict() for c in children],
         "events": [e.to_dict() for e in store.list_events(task_id)],
         "deps": store.get_deps(task_id),
@@ -265,6 +425,74 @@ async def operator_approve(task_id: str):
         store.add_event(task_id, "operator", "comment", "Operator đã duyệt (approve) task.")
         store.add_chat("system", f"✅ Operator đã approve {task_id}.")
     return {"accepted": result.accepted, "final_status": result.final_status, "note": result.note}
+
+
+@app.post("/api/tasks/{task_id}/block")
+async def operator_block_task(task_id: str):
+    """Operator chủ động dừng task và chuyển sang blocked để kiểm tra."""
+    task = store.get_task(task_id)
+    if not task:
+        return JSONResponse({"error": "task not found"}, status_code=404)
+    result = store.set_status(task_id, "blocked", "operator")
+    if result.accepted:
+        # Đổi toàn bộ subtask chưa hoàn thành (kể cả pending/backlog) về blocked
+        subtasks = store.list_tasks(parent_id=task_id)
+        for st in subtasks:
+            if st.status not in ("done", "archived"):
+                try:
+                    store.set_status(st.id, "blocked", "operator")
+                except Exception:
+                    pass
+        store.add_event(task_id, "operator", "system", "Operator chủ động dừng task và chuyển sang Blocked.")
+        store.add_chat("system", f"🛑 Operator đã dừng {task_id} và chuyển sang Blocked (Needs Attention) để kiểm tra.")
+        bus.publish({
+            "type": "status_changed",
+            "task_id": task_id,
+            "status": "blocked",
+            "actor": "operator"
+        })
+    return {"accepted": result.accepted, "final_status": result.final_status, "note": result.note}
+
+
+@app.post("/api/tasks/{task_id}/reject-rollback")
+async def operator_reject_and_rollback(task_id: str):
+    """Operator từ chối thay đổi: Rollback git code về bản gốc + đổi trạng thái task sang Blocked."""
+    task = store.get_task(task_id)
+    if not task:
+        return JSONResponse({"error": "task not found"}, status_code=404)
+
+    # 1. Rollback git code trong project directory
+    p_dir = task.project_dir or os.path.join(config.PROJECTS_DIR, task.project)
+    git_note = ""
+    if os.path.exists(os.path.join(p_dir, ".git")):
+        try:
+            subprocess.run(["git", "restore", "."], cwd=p_dir, capture_output=True, text=True, timeout=15)
+            subprocess.run(["git", "clean", "-fd"], cwd=p_dir, capture_output=True, text=True, timeout=15)
+            git_note = "Đã restore & clean git code thành công."
+        except Exception as e:
+            git_note = f"Lỗi rollback git: {e}"
+    else:
+        git_note = "Không phải git repository."
+
+    # 2. Chuyển trạng thái task (và các subtask) sang blocked
+    result = store.set_status(task_id, "blocked", "operator")
+    subtasks = store.list_tasks(parent_id=task_id)
+    for st in subtasks:
+        try:
+            store.set_status(st.id, "blocked", "operator")
+        except Exception:
+            pass
+
+    store.add_event(task_id, "operator", "system", f"Operator từ chối thay đổi & đã Rollback git code. Task chuyển về Blocked. ({git_note})")
+    store.add_chat("system", f"🛑 Operator đã từ chối task `{task_id}`, rollback git code và chuyển task sang Blocked.")
+    # 3. Tự động restart backend server của project (nếu có) để nạp ngay code gốc vừa rollback
+    if task.project:
+        try:
+            await switch_backend(task.project)
+        except Exception as e:
+            log.warning("Không thể auto-restart backend %s sau rollback: %s", task.project, e)
+
+    return {"accepted": True, "final_status": "blocked", "note": git_note}
 
 
 @app.post("/api/tasks/{task_id}/rerun")
@@ -293,6 +521,67 @@ async def operator_rerun(task_id: str):
     result = store.set_status(task.id, "backlog", "operator")
     store.add_event(task.id, "operator", "system", "Operator đưa task về backlog để agent chạy lại.")
     return {"ok": result.accepted, "mode": "requeue", "note": result.note}
+
+
+class GitPushIn(BaseModel):
+    message: str = ""
+
+
+@app.post("/api/tasks/{task_id}/git-push")
+async def operator_git_push(task_id: str, body: GitPushIn | None = None):
+    """Thực hiện git add ., git commit -m và git push theo yêu cầu thủ công của Operator."""
+    import subprocess
+    task = store.get_task(task_id)
+    if not task:
+        return JSONResponse({"error": "task not found"}, status_code=404)
+
+    project_dir = task.project_dir
+    if not project_dir or not os.path.exists(project_dir):
+        project_dir = os.path.join(config.PROJECTS_DIR, task.project)
+
+    if not os.path.exists(project_dir):
+        return JSONResponse({"error": f"Không tìm thấy thư mục làm việc: {project_dir}"}, status_code=400)
+
+    commit_msg = (body.message.strip() if body and body.message else "") or f"feat: {task.title} ({task.id})"
+
+    try:
+        # 0. Kiểm tra xem có thay đổi (modified/untracked) không
+        status_res = await asyncio.to_thread(
+            subprocess.run, ["git", "status", "--porcelain"], cwd=project_dir, capture_output=True, text=True, check=False
+        )
+        if not status_res.stdout.strip():
+            return JSONResponse({"error": "Không có file code nào bị chỉnh sửa để commit & push (Working tree clean)."}, status_code=400)
+
+        # 1. git add .
+        add_res = await asyncio.to_thread(
+            subprocess.run, ["git", "add", "."], cwd=project_dir, capture_output=True, text=True, check=False
+        )
+
+        # 2. git commit -m "..."
+        commit_res = await asyncio.to_thread(
+            subprocess.run, ["git", "commit", "-m", commit_msg], cwd=project_dir, capture_output=True, text=True, check=False
+        )
+
+        # 3. git push
+        push_res = await asyncio.to_thread(
+            subprocess.run, ["git", "push"], cwd=project_dir, capture_output=True, text=True, check=False
+        )
+        push_out = (push_res.stdout + "\n" + push_res.stderr).strip()
+
+        if push_res.returncode != 0:
+            store.add_event(task.id, "operator", "system", f"Git push thất bại:\n{push_out[:500]}")
+            return JSONResponse({"error": f"Git push thất bại: {push_out}"}, status_code=500)
+
+        store.add_event(task.id, "operator", "system", f"Git Commit & Push thành công: {commit_msg}")
+        store.add_chat("operator", f"🚀 {task.id}: Đã Commit & Push code thành công lên Git repository!\nCommit: {commit_msg}")
+
+        return {
+            "ok": True,
+            "message": f"Push thành công: {commit_msg}",
+            "output": push_out
+        }
+    except Exception as err:
+        return JSONResponse({"error": f"Lỗi thực thi Git: {err}"}, status_code=500)
 
 
 # ---------- Settings ----------
@@ -888,4 +1177,15 @@ async def index():
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host=config.HOST, port=config.PORT, log_level="info")
+    import logging
+    logging.getLogger("watchfiles").setLevel(logging.WARNING)
+    logging.getLogger("watchfiles.main").setLevel(logging.WARNING)
+    uvicorn.run(
+        "orchestrator.main:app",
+        host=config.HOST,
+        port=config.PORT,
+        log_level="info",
+        reload=True,
+        reload_includes=["orchestrator/*.py"],
+        reload_excludes=["workspace/*", "*.db*", "*.log", "brain/*", "__pycache__/*"],
+    )

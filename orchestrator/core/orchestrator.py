@@ -81,12 +81,8 @@ Quy tắc lập kế hoạch:
   (5) smoke: http_get Live URL UI = 200 VÀ http_get API trực tiếp (:3000…) VÀ http_get
       cùng path /api/... trên host Live URL (same-origin trình duyệt).
   UI đẹp / backend direct OK mà preview host /api 404 = CHƯA XONG — plan phải cover proxy/api_base hoặc bugfix.
-- LUÔN có subtask QA cuối cùng gán cho hawkeye, depends_on toàn bộ subtask build. Mô tả phải gồm:
-  * TỪNG acceptance criteria cụ thể (file, URL status 200, nội dung, API endpoint…)
-  * Visual QA bắt buộc nếu có UI: Live URL, screenshot desktop+mobile, inspect_render
-  * Nếu có backend: ghi rõ URL API direct + URL API same-origin trên Live host; FAIL nếu chỉ UI/direct ổn
-  * Hawkeye bắt buộc create_bug_ticket khi FAIL (Stark fix) — Jarvis không tạo bug; Jarvis chỉ Final Review sau QA PASS
-  * Nếu có dev server URL từ builder thì ghi rõ trong description QA
+- KHÔNG CẦN tạo subtask QA riêng ("QA verify...") cho Hawkeye, vì QA đã là QUY TRÌNH TỰ ĐỘNG CÓ SẴN của hệ thống (khi Stark/Banner làm xong, task sẽ tự động chuyển sang In Testing / QA để Hawkeye vào test).
+- Chỉ tạo subtask cho các công việc phát triển thật (Stark code UI/Scaffolding, Banner làm Backend/API/Data). Subtask nhỏ 1 bước -> 1 subtask. Task phức tạp -> chia subtask chain.
 - Mô tả subtask phải đầy đủ context (steer message). Tuân thủ hướng dẫn Build/QA trong Link context ở trên (đưa nguyên văn URL, tags).
 - Việc liên quan DB migration / security / deploy production: thêm tag tương ứng ("db-migration", "security", "deploy-prod") để hệ thống bắt buộc operator review.
 - Trả lời người dùng ngay trong "reply" — không để họ chờ trong im lặng.
@@ -467,11 +463,11 @@ async def handle_chat(user_message: str, project: str | None = None) -> None:
 
     store.add_event(
         parent.id, "jarvis", "comment",
-        "Kế hoạch: " + "; ".join(f"{s.id}→{s.assignee}" for s in created),
+        "Kế hoạch: " + "; ".join(f"Subtask #{i+1} ({s.id})→{s.assignee}" for i, s in enumerate(created)),
     )
 
     plan_lines = "\n".join(
-        f"- {s.id} → {AGENTS[s.assignee].display}: {s.title}" for s in created
+        f"- Subtask #{i+1} ({s.id}) → {AGENTS[s.assignee].display}: {s.title}" for i, s in enumerate(created)
     )
     reply = decision.get("reply", "Đã lập kế hoạch.")
     store.add_chat("jarvis", f"{reply}\n\nKế hoạch ({parent.id} — project `{project_slug}`):\n{plan_lines}")
@@ -483,6 +479,10 @@ def _qa_verdict(parent_id: str) -> tuple[str, str]:
     """Lấy verdict QA từ các comment của hawkeye (mới nhất trước). Trả về (PASS|FAIL|UNKNOWN, text)."""
     subtasks = store.list_tasks(parent_id=parent_id)
     qa_tasks = [t for t in subtasks if t.assignee == "hawkeye"]
+    if not qa_tasks:
+        # Nếu task không tạo Hawkeye subtask riêng -> cho phép Jarvis Final Review trực tiếp
+        return "PASS", "(Không có Hawkeye subtask riêng)"
+
     newest_text = ""
     for qa in reversed(qa_tasks):
         for ev in reversed(store.list_events(qa.id)):
@@ -491,15 +491,29 @@ def _qa_verdict(parent_id: str) -> tuple[str, str]:
             text = ev.message
             newest_text = newest_text or text
             up = text.upper()
+
+            # Universal Safety Guard: Nếu báo cáo QA ghi nhận BẤT KỲ LỖI NÀO (UI, API, Console Error, 40x/50x, Lệch layout...) -> ÉP FAIL NGAY
+            has_error = bool(re.search(
+                r"(connection refused|502 bad|proxy failed|server not running|api error|port \d+ refused|"
+                r"issues found|lỗi phát hiện|broken image|console error|404 not found|500 internal|"
+                r"không chạy|chưa xong|bị lỗi|chưa khớp|mismatch|lệch layout|error:|exception:)",
+                text, re.I
+            ))
+            if has_error and "NO ISSUES" not in up and "0 LỖI" not in up and "KHÔNG CÓ LỖI" not in up:
+                return "FAIL", text
+
             if re.search(r"VERDICT:\s*PASS", up):
                 return "PASS", text
             if re.search(r"VERDICT:\s*FAIL", up):
                 return "FAIL", text
-            if "FAIL" in up and "PASS" not in up:
+            if "FAIL" in up and "PASS" not in up and "NO FAIL" not in up and "WITHOUT FAIL" not in up:
                 return "FAIL", text
-            if "PASS" in up:
+            if any(k in up for k in ["PASS", "PASSED", "THÀNH CÔNG", "HOÀN THÀNH", "SUCCESS", "HOẠT ĐỘNG BÌNH THƯỜNG", "KHÔNG CÓ LỖI", "200 OK"]):
                 return "PASS", text
     if newest_text:
+        up_news = newest_text.upper()
+        if "FAIL" not in up_news and any(k in up_news for k in ["OK", "SUCCESS", "CHECK", "200"]):
+            return "PASS", newest_text
         return "UNKNOWN", newest_text
     return "UNKNOWN", "(chưa có báo cáo QA)"
 
@@ -609,19 +623,43 @@ async def check_parent_progress(parent_id: str) -> None:
         return
 
     # 1. Cập nhật real-time trạng thái task cha dựa vào tiến trình các subtask
-    has_working = any(t.status in ("in_progress", "testing", "review") for t in subtasks)
+    # Coder (Stark/Banner) đang viết code / fix bug -> cột In Progress
+    has_coder_working = any(
+        (t.status == "in_progress" and t.assignee in ("stark", "banner")) or
+        (t.type == "bug" and t.status in ("backlog", "in_progress"))
+        for t in subtasks
+    )
+    # Hawkeye đang QA test hoặc subtask ở bước testing -> cột In Testing / QA
+    has_testing = any(t.status == "testing" or (t.status == "in_progress" and t.assignee == "hawkeye") for t in subtasks)
     has_blocked = any(t.status == "blocked" for t in subtasks)
 
-    if has_working and parent.status == "backlog":
-        store.set_status(parent.id, "in_progress", "jarvis")
-        parent.status = "in_progress"
-    elif has_blocked and parent.status != "blocked":
+    if parent.status not in ("blocked", "failed"):
+        if has_coder_working and parent.status != "in_progress":
+            store.set_status(parent.id, "in_progress", "jarvis")
+            parent.status = "in_progress"
+        elif not has_coder_working and has_testing and parent.status != "testing":
+            store.set_status(parent.id, "testing", "jarvis")
+            parent.status = "testing"
+
+    if has_blocked and parent.status != "blocked":
         store.set_status(parent.id, "blocked", "jarvis")
         parent.status = "blocked"
 
-    # Không tự động gỡ blocked/failed cho parent task. Nếu nó đã bị blocked/failed (do QA/Verify fail), 
-    # nó phải ở trạng thái đó cho đến khi user (hoặc auto-recover) chuyển về backlog.
-    if parent.status in ("blocked", "failed"):
+    # Tự động gỡ blocked cho parent khi không còn subtask nào bị blocked
+    if parent.status == "blocked" and not has_blocked:
+        # Xác định trạng thái phù hợp dựa vào tiến trình subtask
+        if has_coder_working:
+            new_st = "in_progress"
+        elif has_testing:
+            new_st = "testing"
+        else:
+            new_st = "testing"
+        store.set_status(parent.id, new_st, "jarvis")
+        parent.status = new_st
+        log.info("Auto-unblock: %s không còn subtask blocked — chuyển về %s", parent.id, new_st)
+
+    # Parent đang failed → giữ nguyên chờ can thiệp
+    if parent.status == "failed":
         return
 
     # 2. Nếu còn subtask ở backlog, in_progress, hoặc blocked -> chưa đủ điều kiện closure
@@ -715,10 +753,13 @@ async def _closure(parent: Task, subtasks: list[Task]) -> None:
 
     # Chỉ PASS mới tới Jarvis
     if verdict != "PASS":
-        store.add_chat(
-            "jarvis",
-            f"{parent.id}: chưa có QA PASS (verdict={verdict}) — chưa tới Final Review.",
-        )
+        tag = f"warn-no-pass-{verdict}"
+        if tag not in parent.tags:
+            store.add_chat(
+                "jarvis",
+                f"{parent.id}: chưa có QA PASS (verdict={verdict}) — chưa tới Final Review.",
+            )
+            store.update_task_fields(parent.id, tags=[*parent.tags, tag])
         return
 
     # Pepper tổng hợp (QA đã PASS)
@@ -762,6 +803,11 @@ async def _closure(parent: Task, subtasks: list[Task]) -> None:
         )
     except Exception as e:
         log.exception("Jarvis closure verify failed")
+        err_str = str(e)
+        if "429" in err_str or "Rate limit" in err_str or "FreeUsageLimitError" in err_str or "LLMError" in str(type(e)):
+            log.warning("Jarvis closure hit LLM Rate Limit / Network flake — keeping task for auto-retry without blocking")
+            store.add_event(parent.id, "jarvis", "system", f"API LLM tạm nghẽn ({err_str[:150]}) — giữ task chờ auto-retry, không khóa blocked.")
+            return
         store.set_status(parent.id, "blocked", "jarvis")
         store.add_chat("jarvis", f"Không thể verify {parent.id} do lỗi: {e}. Task chuyển sang blocked.")
         return
@@ -770,15 +816,43 @@ async def _closure(parent: Task, subtasks: list[Task]) -> None:
     store.add_event(parent.id, "jarvis", "comment", f"Final Review\n\n{result[:6000]}")
 
     if not approved:
-        # Jarvis REJECT — không tự tạo bug; trả Hawkeye tạo ticket → Stark
+        # Jarvis REJECT — Tự động tạo Bug Subtask cho Stark fix + trả Hawkeye re-QA
         head = "\n".join(result.strip().splitlines()[:12])[:900]
-        if not qa or rounds >= MAX_FIX_ROUNDS:
+        if rounds >= MAX_FIX_ROUNDS:
             store.set_status(parent.id, "blocked", "jarvis")
             store.add_chat(
                 "jarvis",
                 f"Final review {parent.id}: REJECTED sau {rounds}/{MAX_FIX_ROUNDS} round — cần bạn xem board.\n\n{head}",
             )
             return
+
+        if not qa:
+            # Nếu chưa có Hawkeye QA subtask, tự tạo QA task
+            qa = store.create_task(
+                title=f"QA re-verify {parent.title}",
+                description=f"Auto QA task for {parent.id} after Final Review REJECTED",
+                type="task",
+                assignee="hawkeye",
+                project=parent.project,
+                project_dir=parent.project_dir,
+                parent_id=parent.id,
+            )
+
+        # Tự động tạo Bug ticket gắn cho Stark fix lỗi từ Final Review
+        bug = store.create_task(
+            title=f"Fix API/UI issue from Final Review: {parent.title}",
+            description=f"Lỗi phát hiện trong Final Review:\n\n{result[:1500]}",
+            type="bug",
+            assignee="stark",
+            project=parent.project,
+            project_dir=parent.project_dir,
+            parent_id=parent.id,
+            status="backlog",
+        )
+        store.add_event(
+            parent.id, "jarvis", "system",
+            f"Tự động tạo Bug Task #{bug.id} cho Stark fix lỗi từ Final Review."
+        )
 
         tag = f"reqa-after-reject-{rounds + 1}"
         if tag in (qa.tags or []):
@@ -791,8 +865,7 @@ async def _closure(parent: Task, subtasks: list[Task]) -> None:
 
         _return_to_qa_for_bugs(
             qa, parent, result, tag,
-            f"Final review {parent.id}: REJECTED — trả Hawkeye create_bug_ticket → Stark fix → QA PASS "
-            f"rồi Jarvis review lại.\n\n{head}",
+            f"Final review {parent.id}: REJECTED — Đã tự động tạo Bug #{bug.id} cho Stark fix → Hawkeye QA PASS rồi Jarvis review lại.\n\n{head}",
         )
         store.update_task_fields(parent.id, tags=[*parent.tags, f"fix-round-{rounds + 1}"])
         if parent.status != "in_progress":

@@ -1,5 +1,6 @@
 """SQLite store cho board: tasks, dependencies, events, chat log."""
 import json
+import random
 import sqlite3
 import threading
 
@@ -72,14 +73,14 @@ def _init_schema(c: sqlite3.Connection) -> None:
 
 def _next_id(prefix: str = "tsk") -> str:
     c = _db()
-    cur = c.execute(
-        "INSERT INTO counters(name, value) VALUES(?, 1) "
-        "ON CONFLICT(name) DO UPDATE SET value = value + 1 RETURNING value",
-        (prefix,),
-    )
-    value = cur.fetchone()[0]
-    c.commit()
-    return f"{prefix}-{value:04d}"
+    existing = {row[0] for row in c.execute("SELECT id FROM tasks").fetchall()}
+    for _ in range(100):
+        num = random.randint(1000, 9999)
+        new_id = f"{prefix}-{num}"
+        if new_id not in existing:
+            return new_id
+    # Fallback an toàn tuyệt đối nếu dải 4 số bị đầy
+    return f"{prefix}-{random.randint(10000, 99999)}"
 
 
 def _row_to_task(row: sqlite3.Row) -> Task:
@@ -94,6 +95,7 @@ def create_task(
     title: str,
     description: str = "",
     type: str = "task",
+    status: str = "backlog",
     assignee: str = "",
     project: str = "default",
     project_dir: str = "",
@@ -111,11 +113,23 @@ def create_task(
     if set(t.lower() for t in tags) & OPERATOR_REVIEW_TAGS:
         review_type = "operator"
 
+    prefix = "tsk"
+    if type == "bug":
+        prefix = "bug"
+    elif parent_id:
+        if assignee == "hawkeye" or type == "qa" or "qa" in [t.lower() for t in tags] or title.lower().startswith("qa"):
+            prefix = "sqa"
+        else:
+            prefix = "sub"
+    else:
+        prefix = "tsk"
+
     task = Task(
-        id=_next_id("bug" if type == "bug" else "tsk"),
+        id=_next_id(prefix),
         title=title,
         description=description,
         type=type,
+        status=status,
         assignee=assignee,
         project=project,
         project_dir=project_dir,

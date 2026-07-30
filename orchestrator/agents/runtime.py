@@ -49,6 +49,14 @@ async def run_agent(
     log.info("[%s/%s] model=%s url=%s", agent_name, task.id, model, base_url)
 
     for iteration in range(1, max_iterations + 1):
+        # Kiểm tra real-time nếu task hoặc task cha đã bị operator dừng/blocked/archived
+        curr_task = store.get_task(task.id)
+        parent_task = store.get_task(curr_task.parent_id) if (curr_task and curr_task.parent_id) else None
+        if (curr_task and curr_task.status in ("blocked", "failed", "archived")) or (parent_task and parent_task.status in ("blocked", "failed", "archived")):
+            status_str = parent_task.status if (parent_task and parent_task.status in ("blocked", "failed", "archived")) else (curr_task.status if curr_task else "blocked")
+            log.info("[%s/%s] Task hoặc Task cha status là '%s' — dừng agent loop lập tức.", agent_name, task.id, status_str)
+            return f"[Tiến trình bị ngắt do task hoặc task cha chuyển sang {status_str}]"
+
         msg = await llm.chat(
             messages, tools=tools, model=model, base_url=base_url, api_key=api_key
         )

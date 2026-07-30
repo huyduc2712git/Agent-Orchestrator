@@ -1,5 +1,7 @@
 """Bộ tool thực thi thật cho agent: file, command, search, http, figma, board."""
 import json
+import logging
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -10,6 +12,8 @@ from .. import config, settings
 from ..board import store
 from ..board.models import SEVERITIES, Task
 from ..qa import browser as qa_browser
+
+log = logging.getLogger("tools")
 
 # ---------- OpenAI tool schemas ----------
 
@@ -75,7 +79,7 @@ TOOL_SCHEMAS: dict[str, dict] = {
                 "Chạy một lệnh PowerShell trong project directory (timeout "
                 f"{config.COMMAND_TIMEOUT_SECONDS}s). Dùng cho build, test, git... "
                 "KHÔNG chạy lệnh chờ vô hạn (dev server foreground) — nếu cần server, "
-                "chạy dưới dạng Start-Process hoặc job nền."
+                "chạy dạng Start-Process node ... -RedirectStandardOutput 'server.log' (KHÔNG dùng -NoNewWindow)."
             ),
             "parameters": {
                 "type": "object",
@@ -255,6 +259,24 @@ TOOL_SCHEMAS: dict[str, dict] = {
             },
         },
     },
+    "save_start_command": {
+        "type": "function",
+        "function": {
+            "name": "save_start_command",
+            "description": (
+                "Lưu lệnh khởi động backend/server cho project hiện tại. "
+                "Orchestrator sẽ tự động chạy lệnh này khi khởi động lần sau. "
+                "GỌI SAU KHI đã start server thành công và verify health OK."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "description": "Lệnh start server đầy đủ, vd: 'npm run start' hoặc 'node dist/server.cjs'"},
+                },
+                "required": ["command"],
+            },
+        },
+    },
 }
 
 
@@ -354,6 +376,55 @@ class ToolContext:
     # --- command / http ---
 
     def _tool_run_command(self, command: str) -> str:
+        # 1. Tự động đổi && thành ; cho tương thích với PowerShell 5.1 trên Windows
+        command = re.sub(r"\s+&&\s+", "; ", command)
+
+        # 2. Tự động đảm bảo Start-Process dùng -WindowStyle Hidden để ẩn hoàn toàn cửa sổ console trên Windows
+        if "Start-Process" in command:
+            if "-NoNewWindow" in command:
+                command = re.sub(r"-NoNewWindow\b", "", command, flags=re.IGNORECASE)
+            if "-WindowStyle" not in command:
+                command = re.sub(r"\bStart-Process\b", "Start-Process -WindowStyle Hidden", command, flags=re.IGNORECASE)
+
+        # 3. Tự động nhận diện lệnh chạy server ngầm (Start-Process / Start-Job hoặc dev/prod server)
+        server_pattern = r"\b(node|python|py|npm|npx|bun|yarn)\b.*\b(server|app\.py|main\.py|dev|start|preview|vite|next|uvicorn|fastapi)\b"
+        is_background = (
+            "Start-Process" in command
+            or "Start-Job" in command
+            or bool(re.search(server_pattern, command, re.IGNORECASE))
+        )
+
+        if is_background:
+            # Lưu lệnh gốc trước khi bọc Start-Process (để auto-start lần sau)
+            original_cmd = command
+
+            # Nếu chưa dùng Start-Process mà gọi lệnh server trực tiếp, tự bọc Start-Process với -WindowStyle Hidden để chạy ngầm ẩn cửa sổ
+            if "Start-Process" not in command and "Start-Job" not in command:
+                log.info("Tự động bọc lệnh server sang Start-Process: %s", command)
+                command = f'Start-Process powershell -WindowStyle Hidden -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command {json.dumps(command)}"'
+
+            try:
+                creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+                proc = subprocess.Popen(
+                    ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
+                    cwd=str(self.project_dir),
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    stdin=subprocess.DEVNULL,
+                    creationflags=creationflags,
+                )
+                try:
+                    exit_code = proc.wait(timeout=3.0)
+                    result = f"exit_code={exit_code}\n(Lệnh background/server đã được khởi chạy ngầm thành công)"
+                except subprocess.TimeoutExpired:
+                    result = "exit_code=0\n(Lệnh background/server đã được khởi chạy ngầm thành công)"
+
+                # Auto-save start_command vào project settings
+                self._auto_save_start_command(original_cmd)
+                return result + "\n💡 Tip: gọi save_start_command để lưu lệnh start — Orchestrator sẽ tự chạy lại khi khởi động."
+            except Exception as e:
+                return f"ERROR: không thể khởi chạy background process: {e}"
+
         try:
             proc = subprocess.run(
                 ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
@@ -367,7 +438,40 @@ class ToolContext:
             out = (proc.stdout or "") + (("\n[stderr]\n" + proc.stderr) if proc.stderr else "")
             return f"exit_code={proc.returncode}\n{out.strip()}"
         except subprocess.TimeoutExpired:
-            return f"ERROR: lệnh vượt quá timeout {config.COMMAND_TIMEOUT_SECONDS}s"
+            return f"ERROR: lệnh vượt quá timeout {config.COMMAND_TIMEOUT_SECONDS}s — nếu khởi chạy background server hãy dùng Start-Process"
+
+    def _auto_save_start_command(self, command: str) -> None:
+        """Tự động lưu lệnh start backend vào project settings khi chạy server ngầm thành công."""
+        try:
+            slug = self.task.project
+            if not slug:
+                return
+            # Lọc bỏ phần Start-Process wrapper, giữ lệnh gốc
+            clean_cmd = command.strip()
+            if clean_cmd.startswith("Start-Process"):
+                # Trích lệnh thật từ -ArgumentList hoặc -Command
+                m = re.search(r'-Command\s+(.+?)(?:\"|\'|$)', clean_cmd)
+                if m:
+                    clean_cmd = m.group(1).strip().strip('"').strip("'")
+                else:
+                    clean_cmd = command.strip()
+            proj = settings.get_project(slug)
+            if proj and not proj.get("start_command"):
+                settings.upsert_project(slug, start_command=clean_cmd)
+                log.info("Auto-saved start_command cho project '%s': %s", slug, clean_cmd)
+        except Exception as e:
+            log.warning("Không thể auto-save start_command: %s", e)
+
+    def _tool_save_start_command(self, command: str) -> str:
+        """Agent gọi tool này để lưu lệnh start server vào project settings."""
+        slug = self.task.project
+        if not slug:
+            return "ERROR: task không gắn project — không thể lưu start_command"
+        try:
+            settings.upsert_project(slug, start_command=command.strip())
+            return f"OK: Đã lưu start_command cho project '{slug}': {command.strip()}\nOrchestrator sẽ tự động chạy lệnh này khi khởi động lần sau."
+        except Exception as e:
+            return f"ERROR: {e}"
 
     def _tool_http_get(self, url: str) -> str:
         try:
@@ -655,11 +759,11 @@ def _figma_walk(node: dict, depth: int, lines: list[str]) -> None:
 DEFAULT_WORKER_TOOLS = [
     "read_file", "write_file", "list_dir", "search_files",
     "run_command", "http_get", "figma_get", "git_clone", "git_status",
-    "post_message", "search_tasks", "create_bug_ticket",
+    "post_message", "search_tasks", "create_bug_ticket", "save_start_command",
 ]
 QA_TOOLS = [
     "read_file", "list_dir", "search_files", "run_command",
     "http_get", "figma_get", "git_clone", "git_status",
     "screenshot_url", "inspect_render", "compare_image",
-    "post_message", "search_tasks", "create_bug_ticket",
+    "post_message", "search_tasks", "create_bug_ticket", "save_start_command",
 ]

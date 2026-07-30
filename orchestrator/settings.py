@@ -173,7 +173,7 @@ def clear_pending_clone() -> None:
     set_pending_clone(None)
 
 
-def upsert_project(slug: str, name: str = "", project_dir: str = "", api_base: str = "") -> dict:
+def upsert_project(slug: str, name: str = "", project_dir: str = "", api_base: str = "", start_command: str = "") -> dict:
     """Tạo hoặc cập nhật project theo slug. Trả về project dict."""
     import re
     from pathlib import Path
@@ -184,6 +184,7 @@ def upsert_project(slug: str, name: str = "", project_dir: str = "", api_base: s
     if project_dir and not is_plausible_fs_path(project_dir):
         project_dir = ""
     api_base = (api_base or "").strip().rstrip("/")
+    start_command = (start_command or "").strip()
 
     data = load()
     existing = {p["slug"]: p for p in data.get("projects", [])}
@@ -199,6 +200,8 @@ def upsert_project(slug: str, name: str = "", project_dir: str = "", api_base: s
             p["project_dir"] = str(Path(root) / slug)
         if api_base:
             p["api_base"] = api_base
+        if start_command:
+            p["start_command"] = start_command
     else:
         if project_dir:
             dir_path = project_dir
@@ -218,6 +221,8 @@ def upsert_project(slug: str, name: str = "", project_dir: str = "", api_base: s
         }
         if api_base:
             p["api_base"] = api_base
+        if start_command:
+            p["start_command"] = start_command
         data.setdefault("projects", []).append(p)
     data["active_project"] = slug
     save(data)
@@ -225,8 +230,14 @@ def upsert_project(slug: str, name: str = "", project_dir: str = "", api_base: s
 
 
 def get_project(slug: str) -> dict | None:
+    from pathlib import Path
+    from .paths import is_under_orchestrator
     for p in projects():
         if p["slug"] == slug:
+            p_dir = Path(p.get("project_dir", ""))
+            eff_dir = Path(effective_projects_root()) / slug
+            if eff_dir.exists() and (not p_dir.exists() or is_under_orchestrator(p_dir)):
+                p["project_dir"] = str(eff_dir)
             return p
     return None
 

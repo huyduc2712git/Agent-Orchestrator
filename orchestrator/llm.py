@@ -71,6 +71,8 @@ async def chat(
     last_err: Exception | None = None
     for attempt in range(1, max_retries + 1):
         client = _get_client(base_url, api_key)
+        curr_model = payload["model"]
+        curr_base_url = base_url or config.LLM_BASE_URL
         try:
             resp = await client.post("/chat/completions", json=payload)
             if resp.status_code == 429 or resp.status_code >= 500:
@@ -124,6 +126,15 @@ async def chat(
             if isinstance(e, (httpx.TimeoutException, httpx.NetworkError)):
                 _reset_client(base_url, api_key)
 
+            log.warning(
+                "LLM call failed [%s @ %s] (attempt %d/%d): %s",
+                curr_model,
+                curr_base_url,
+                attempt,
+                max_retries,
+                e,
+            )
+
             # Model có giới hạn output nhỏ hơn -> hạ max_tokens thay vì retry vô ích
             if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 400:
                 body = e.response.text[:500].lower()
@@ -134,41 +145,39 @@ async def chat(
                         payload["max_tokens"] = reduced
                         continue
 
-            # Fallback model mặc định khi rate-limit hoặc upstream model free chết
+            # Fallback model mặc định khi 403 (forbidden/hết token), 401, 429, 5xx, hoặc upstream provider error
             err_s = str(e).lower()
-            is_rate_limit = (
-                (isinstance(e, LLMError) and "HTTP 429" in str(e))
-                or (isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 429)
+            status_code = getattr(getattr(e, "response", None), "status_code", None)
+
+            is_auth_or_quota = (
+                status_code in (401, 402, 403, 429)
+                or any(k in err_s for k in ("403", "401", "429", "forbidden", "unauthorized", "quota", "credit", "balance", "insufficient"))
             )
-            is_upstream = isinstance(e, LLMError) and any(
-                k in err_s
-                for k in (
-                    "upstream",
-                    "server_error",
-                    "provider error",
-                    "missing 'choices'",
-                    "overloaded",
-                )
+            is_upstream = (
+                (status_code is not None and status_code >= 500)
+                or any(k in err_s for k in ("upstream", "server_error", "provider error", "missing 'choices'", "overloaded"))
             )
-            if (is_rate_limit or is_upstream) and payload["model"] != config.LLM_MODEL:
-                log.warning(
-                    "%s trên %s -> fallback model mặc định %s",
-                    "429" if is_rate_limit else "upstream/provider error",
-                    payload["model"],
-                    config.LLM_MODEL,
-                )
+            is_custom = (payload["model"] != config.LLM_MODEL) or (base_url and base_url != config.LLM_BASE_URL)
+
+            if (is_auth_or_quota or is_upstream) and is_custom:
+                reason = "401/403 (hết token/quota/forbidden)" if is_auth_or_quota else "rate-limit/upstream error"
+                # Reset old client before switching base_url
+                _reset_client(base_url, api_key)
+
                 payload["model"] = config.LLM_MODEL
                 base_url = config.LLM_BASE_URL
                 api_key = config.LLM_API_KEY
 
-            log.warning(
-                "LLM call failed [%s @ %s] (attempt %d/%d): %s",
-                payload["model"],
-                (base_url or config.LLM_BASE_URL),
-                attempt,
-                max_retries,
-                e,
-            )
+                log.warning(
+                    "%s trên [%s @ %s] -> Chuyển ngay lập tức sang model mặc định [%s @ %s]",
+                    reason,
+                    curr_model,
+                    curr_base_url,
+                    payload["model"],
+                    base_url,
+                )
+                continue
+
             if attempt < max_retries:
                 await asyncio.sleep(3 * attempt)
     raise LLMError(

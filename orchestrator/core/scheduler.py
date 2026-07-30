@@ -133,13 +133,23 @@ async def _run_worker(task: Task) -> None:
                 task,
                 agent.tools,
             )
+            curr = store.get_task(task.id)
+            if curr and curr.status in ("blocked", "failed", "archived"):
+                log.info("Worker %s kết thúc sớm cho %s vì status đã chuyển sang %s", task.assignee, task.id, curr.status)
+                return
             store.add_event(task.id, task.assignee, "comment", result[:4000])
             store.set_status(task.id, "testing", task.assignee)
         except Exception as e:
             log.exception("Worker %s failed on %s", task.assignee, task.id)
-            store.set_status(task.id, "blocked", task.assignee)
-            store.add_event(task.id, "system", "system", f"Agent gặp lỗi: {e}")
-            store.add_chat("jarvis", f"⚠️ {task.id} ({task.title}) bị blocked do lỗi: {str(e)[:200]}")
+            err_str = str(e)
+            if "429" in err_str or "Rate limit" in err_str or "FreeUsageLimitError" in err_str or "LLMError" in str(type(e)):
+                log.warning("Worker %s hit LLM Rate Limit on %s — requeuing to backlog for auto-retry", task.assignee, task.id)
+                store.set_status(task.id, "backlog", task.assignee)
+                store.add_event(task.id, "system", "system", f"API LLM nghẽn tạm thời ({err_str[:150]}) — tự động chờ để thử lại.")
+            else:
+                store.set_status(task.id, "blocked", task.assignee)
+                store.add_event(task.id, "system", "system", f"Agent gặp lỗi: {e}")
+                store.add_chat("jarvis", f"⚠️ {task.id} ({task.title}) bị blocked do lỗi: {str(e)[:200]}")
         finally:
             _in_flight.discard(task.id)
 
@@ -177,9 +187,13 @@ def auto_recover_stuck_and_blocked_tasks() -> None:
                 pass
 
     # 2. Quét task/subtask bị blocked để tự động rerun (tối đa 3 lần)
-    # Parent bị REJECTED do QA FAIL: KHÔNG auto-rerun closure — cần fix code trước.
     blocked_tasks = store.list_tasks(status=["blocked"])
     for t in blocked_tasks:
+        # Nếu Operator chủ động block -> KHÔNG tự động auto-recover, giữ nguyên blocked chờ Operator
+        events = store.list_events(t.id)
+        if any(e.agent == "operator" and ("blocked" in e.message.lower() or "dừng" in e.message.lower()) for e in events[-10:]):
+            continue
+
         is_parent = not t.parent_id and bool(store.list_tasks(parent_id=t.id))
         if is_parent:
             # Parent blocked: nếu Final Review mới nhất đã APPROVED → đóng luôn (đừng kẹt vì QA FAIL cũ)
@@ -282,14 +296,23 @@ async def scheduler_loop() -> None:
     _semaphore = asyncio.Semaphore(config.MAX_CONCURRENT_AGENTS)
     log.info("Scheduler started")
 
-    # Khôi phục các subtask in_progress bị mồ côi do server restart
+    # Khôi phục các subtask in_progress bị mồ côi do server restart (CHỈ reset worker subtask, KHÔNG reset parent task)
     try:
-        orphaned = [t for t in store.list_tasks(status=["in_progress"])]
+        orphaned = [
+            t for t in store.list_tasks(status=["in_progress"])
+            if t.parent_id  # Chỉ reset subtask
+        ]
         for ot in orphaned:
-            log.info("Resetting orphaned in_progress task %s -> backlog for auto-resumption", ot.id)
+            log.info("Resetting orphaned in_progress subtask %s -> backlog for auto-resumption", ot.id)
             store.set_status(ot.id, "backlog", "system")
     except Exception:
         log.exception("Failed to reset orphaned in_progress tasks")
+
+    # Sync cập nhật real-time trạng thái parent tasks ngay lập tức khi khởi động
+    try:
+        auto_recover_stuck_and_blocked_tasks()
+    except Exception:
+        log.exception("Initial auto-recover check failed")
 
     while True:
         try:

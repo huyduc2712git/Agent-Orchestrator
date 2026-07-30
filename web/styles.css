@@ -65,10 +65,30 @@ body.sidebar-collapsed .app-sidebar {
 }
 body.sidebar-collapsed .brand-text,
 body.sidebar-collapsed .nav-item-text,
-body.sidebar-collapsed .sidebar-section,
+body.sidebar-collapsed .sidebar-section-head,
 body.sidebar-collapsed .settings-label,
-body.sidebar-collapsed #conn-status {
+body.sidebar-collapsed #conn-status,
+body.sidebar-collapsed .project-label,
+body.sidebar-collapsed .chevron,
+body.sidebar-collapsed .project-remove,
+body.sidebar-collapsed .project-tasks,
+body.sidebar-collapsed .sidebar-task,
+body.sidebar-collapsed .sidebar-task *,
+body.sidebar-collapsed .sidebar-hint,
+body.sidebar-collapsed .dot {
   display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  height: 0 !important;
+  width: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+}
+body.sidebar-collapsed .project-name {
+  justify-content: center;
+  padding: 10px 0 !important;
+  border-left: none !important;
 }
 body.sidebar-collapsed .sidebar-brand {
   padding: 0 12px 20px;
@@ -194,6 +214,15 @@ body.sidebar-collapsed .sidebar-settings {
   cursor: pointer;
   border-radius: 6px;
 }
+.project-name .git-icon,
+.project-name .project-folder-icon {
+  font-size: 0.95rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
 .project-name:hover { background: var(--card); }
 .project-name .project-remove {
   margin-left: auto;
@@ -242,6 +271,9 @@ body.sidebar-collapsed .sidebar-settings {
   font-size: 0.6rem;
   color: var(--text-dim);
   width: 12px;
+}
+.project-group:not(.active) .project-tasks {
+  display: none !important;
 }
 .project-tasks { padding-left: 4px; }
 .sidebar-task {
@@ -293,40 +325,65 @@ body.sidebar-collapsed .sidebar-settings {
 .app-main {
   flex: 1;
   min-width: 0;
+  max-width: 100%;
   display: flex;
   flex-direction: column;
   background: var(--bg);
+  overflow-x: hidden;
 }
-.view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.view {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow-x: hidden;
+}
 
 /* ========== BOARD ========== */
 .board-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 20px 24px 16px;
+  padding: 14px 20px 10px;
   flex-shrink: 0;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  gap: 12px;
+  min-width: 0;
 }
 .board-toolbar-left {
   display: flex;
   align-items: baseline;
   gap: 12px;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
 }
 .board-toolbar-left h1.board-title {
   font-size: 1.4rem;
   font-weight: 700;
   letter-spacing: -0.02em;
   color: #fafafa;
+  flex-shrink: 0;
 }
 .board-subtitle {
   color: #71717a;
   font-size: 0.82rem;
   font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 .board-toolbar-right {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-shrink: 0;
+  margin-left: auto;
 }
 .btn-ghost {
   background: #141416;
@@ -383,27 +440,19 @@ body.sidebar-collapsed .sidebar-settings {
   color: var(--text);
 }
 
-/* Kanban — bám sát ảnh mẫu */
 .kanban {
   flex: 1;
-  display: grid;
-  grid-template-columns: repeat(4, minmax(280px, 1fr));
-  gap: 16px;
-  overflow-x: auto;
-  padding: 0 20px 20px;
-  min-height: 0;
-}
-/* Kanban — 6 Cột Jira chuẩn */
-.kanban {
-  flex: 1;
-  display: grid;
-  grid-template-columns: repeat(6, minmax(260px, 1fr));
+  display: flex;
+  flex-direction: row;
   gap: 14px;
   overflow-x: auto;
   padding: 0 20px 20px;
   min-height: 0;
+  -webkit-overflow-scrolling: touch;
 }
 .kanban-col {
+  flex: 1 1 260px;
+  min-width: 260px;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -505,10 +554,35 @@ body.sidebar-collapsed .sidebar-settings {
   transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.2s, background 0.2s, box-shadow 0.2s;
 }
 .task-card:hover {
-  background: #19191d;
-  border-color: #33333d;
-  transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  background: #17171a;
+  border-color: rgba(99, 102, 241, 0.3);
+  box-shadow: 0 0 10px rgba(99, 102, 241, 0.12), 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+
+.btn-task-block {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: #71717a;
+  font-size: 0.85rem;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 5px;
+  border-radius: 4px;
+  opacity: 0.55;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+.btn-task-block:hover {
+  opacity: 1;
+  color: #f87171;
+  background: rgba(239, 68, 68, 0.12);
+}
+.btn-task-block:active {
+  transform: scale(0.92);
 }
 .task-card-head {
   display: flex;
@@ -975,7 +1049,55 @@ body.sidebar-collapsed .sidebar-settings {
   width: min(720px, 92vw); max-height: 86vh; overflow-y: auto;
   background: var(--surface); border: 1px solid var(--border);
   border-radius: 14px; padding: 22px; color: var(--text);
+  scroll-behavior: smooth;
 }
+
+/* Modal floating sticky scroll controls (Bottom Right inside Modal) */
+.modal-scroll-controls {
+  position: sticky;
+    bottom: 0.5px;
+    /* margin-top: 8px; */
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  z-index: 100;
+  pointer-events: none;
+  margin-right: -6px;
+  margin-bottom: -6px;
+}
+.modal-scroll-btn {
+  pointer-events: auto;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #1e293b;
+  border: 1px solid #334155;
+  color: #94a3b8;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(6px);
+  transition: all 0.15s ease;
+}
+.modal-scroll-btn svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+  transition: transform 0.2s ease;
+}
+.modal-scroll-btn:hover {
+  background: #334155;
+  color: #f8fafc;
+  border-color: #475569;
+  transform: translateY(-2px) scale(1.08);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.5);
+}
+.modal-scroll-btn:active {
+  transform: scale(0.92);
+}
+
 .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 .task-id { font-family: Consolas, monospace; color: var(--text-dim); margin-right: 8px; font-size: 0.85rem; }
 .badge {
@@ -997,7 +1119,45 @@ body.sidebar-collapsed .sidebar-settings {
   color: var(--text); border-radius: 8px; padding: 7px 14px;
   font: inherit; font-size: 0.85rem; cursor: pointer;
 }
-.modal-actions .btn-approve { background: var(--green); border-color: var(--green); color: #052e12; font-weight: 650; }
+.modal-actions .btn-git-push.has-pending {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  border-color: #059669;
+  color: #ffffff;
+  font-weight: 650;
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.3);
+  transition: all 0.15s ease;
+}
+.modal-actions .btn-git-push.has-pending:hover {
+  background: linear-gradient(135deg, #059669 0%, #047857 100%);
+  box-shadow: 0 0 14px rgba(16, 185, 129, 0.5);
+}
+.modal-actions .btn-git-push.is-clean {
+  background: #1e293b;
+  border: 1px solid #334155;
+  color: #94a3b8;
+  font-weight: 550;
+  transition: all 0.15s ease;
+}
+.modal-actions .btn-git-push.is-clean:hover {
+  background: #334155;
+  color: #f1f5f9;
+}
+.modal-actions .btn-rollback {
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  color: #f87171;
+  font-weight: 600;
+  border-radius: 8px;
+  padding: 7px 14px;
+  font-size: 0.85rem;
+  transition: all 0.15s ease;
+}
+.modal-actions .btn-rollback:hover {
+  background: rgba(239, 68, 68, 0.25);
+  border-color: rgba(239, 68, 68, 0.6);
+  color: #fca5a5;
+  box-shadow: 0 0 10px rgba(239, 68, 68, 0.25);
+}
 .modal-desc {
   background: var(--card); border: 1px solid var(--border);
   border-radius: 8px; padding: 12px; font-size: 0.86rem;
@@ -1420,14 +1580,214 @@ body.sidebar-collapsed .sidebar-settings {
 ::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 3px; }
 ::-webkit-scrollbar-track { background: transparent; }
 
-@media (max-width: 1100px) {
-  .kanban { grid-template-columns: repeat(4, minmax(220px, 1fr)); }
+/* ========== RESPONSIVE DESIGN & BREAKPOINTS ========== */
+@media (max-width: 1200px) {
+  .kanban {
+    gap: 12px;
+    padding: 0 16px 16px;
+  }
+  .kanban-col {
+    flex: 0 0 280px;
+    min-width: 280px;
+  }
 }
+
+@media (max-width: 992px) {
+  .board-toolbar {
+    padding: 12px 16px 10px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .board-toolbar-left h1.board-title {
+    font-size: 1.25rem;
+  }
+  .board-subtitle {
+    display: none !important;
+  }
+  .board-toolbar-right {
+    margin-left: auto;
+  }
+}
+
 @media (max-width: 768px) {
-  .app-sidebar { width: 56px; }
-  .brand-text, .sidebar-section-head span, .nav-item span:not(.nav-dot),
-  .sidebar-task .label, .sidebar-settings span, .conn { display: none; }
-  .sidebar-brand { justify-content: center; padding: 0 8px 16px; }
+  .board-toolbar {
+    padding: 10px 12px;
+    gap: 8px;
+  }
+  .board-toolbar-left {
+    min-width: 0;
+    flex: 0 1 auto;
+  }
+  .board-toolbar-left h1.board-title {
+    font-size: 1.15rem;
+  }
+  .board-toolbar-right {
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+  .btn-orchestrator {
+    padding: 4px 8px;
+    font-size: 0.75rem;
+  }
+
+  /* Sidebar compact view on mobile & tablet */
+  .app-sidebar {
+    width: 60px;
+    flex-shrink: 0;
+  }
+  .app-sidebar .brand-text,
+  .app-sidebar .sidebar-section-head,
+  .app-sidebar .nav-item-text,
+  .app-sidebar .settings-label,
+  .app-sidebar #conn-status,
+  .app-sidebar .conn,
+  .app-sidebar .project-label,
+  .app-sidebar .project-remove,
+  .app-sidebar .chevron,
+  .app-sidebar .project-tasks,
+  .app-sidebar .sidebar-task,
+  .app-sidebar .sidebar-task *,
+  .app-sidebar .sidebar-hint,
+  .app-sidebar .dot {
+    display: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+  }
+  .app-sidebar .sidebar-brand {
+    justify-content: center;
+    padding: 0 8px 14px;
+  }
+  .app-sidebar .sidebar-nav {
+    padding: 0 6px 12px;
+    align-items: center;
+  }
+  .app-sidebar .nav-item {
+    justify-content: center;
+    padding: 10px;
+    width: 100%;
+  }
+  .app-sidebar .project-name {
+    justify-content: center;
+    padding: 8px 0 !important;
+    border-left: none !important;
+  }
+  .app-sidebar .sidebar-footer {
+    padding: 12px 8px 0;
+    justify-content: center;
+  }
+  .app-sidebar .sidebar-settings {
+    justify-content: center;
+    padding: 8px;
+    width: 100%;
+  }
+
+  /* Smooth swipeable horizontal kanban columns on mobile */
+  .kanban {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 14px;
+    padding: 12px 16px 16px;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+  }
+  .kanban-col {
+    min-width: 280px;
+    max-width: 320px;
+    flex: 0 0 280px;
+    scroll-snap-align: start;
+  }
+
+  /* Chat Panel Mobile UX */
+  .chat-messages {
+    padding: 14px 16px;
+    gap: 14px;
+  }
+  .msg-bubble {
+    padding: 12px 14px;
+    font-size: 0.88rem;
+  }
+  .chat-demo-bar {
+    padding: 0 16px 8px;
+  }
+  .chat-suggestions {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .suggestion-chip {
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .chat-composer {
+    margin: 0 12px 12px;
+    padding: 10px 12px 8px;
+    border-radius: 12px;
+  }
+  .key-hint {
+    display: none;
+  }
+  .chat-footer {
+    padding: 8px 16px 12px;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  /* Modals Mobile Adjustments */
+  .modal, .modal-settings {
+    width: 94vw;
+    max-height: 88vh;
+    padding: 16px;
+    border-radius: 12px;
+  }
+  .settings-nav-tabs {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    padding-bottom: 8px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .settings-tab-btn {
+    white-space: nowrap;
+    padding: 6px 12px;
+    font-size: 0.8rem;
+  }
+  .modal-subtask-card {
+    grid-template-columns: 1fr auto;
+    gap: 10px;
+    padding: 10px 12px;
+  }
+  .modal-subtask-card .subtask-agent {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 480px) {
+  .board-toolbar {
+    padding: 12px 12px 10px;
+  }
+  .board-toolbar-left h1.board-title {
+    font-size: 1.1rem;
+  }
+  .btn-ghost, .btn-orchestrator {
+    padding: 5px 10px;
+    font-size: 0.76rem;
+  }
+  .model-pill {
+    max-width: 130px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .modal-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .modal-actions button {
+    width: 100%;
+    text-align: center;
+  }
 }
 
 /* ========== SUBTASKS BREAKDOWN DISPLAY ========== */
@@ -1462,7 +1822,7 @@ body.sidebar-collapsed .sidebar-settings {
   height: 100%;
   background: linear-gradient(90deg, #60a5fa, #3b82f6);
   border-radius: 4px;
-  transition: width 0.3s ease;
+  transition: width 0.3s ease, background 0.3s ease;
 }
 
 .subtasks-list {
@@ -1485,7 +1845,7 @@ body.sidebar-collapsed .sidebar-settings {
   border-radius: 50%;
   flex-shrink: 0;
 }
-.subtask-card-row.sub-backlog .subtask-dot { background: #94a3b8; }
+.subtask-card-row.sub-backlog .subtask-dot { background: #3f57cc; box-shadow: 0 0 6px rgba(63, 87, 204, 0.8); }
 .subtask-card-row.sub-working .subtask-dot { background: #f59e0b; box-shadow: 0 0 6px rgba(245, 158, 11, 0.8); }
 .subtask-card-row.sub-testing .subtask-dot { background: #38bdf8; box-shadow: 0 0 6px rgba(56, 189, 248, 0.8); }
 .subtask-card-row.sub-review .subtask-dot { background: #a78bfa; box-shadow: 0 0 6px rgba(167, 139, 250, 0.8); }
@@ -1507,18 +1867,46 @@ body.sidebar-collapsed .sidebar-settings {
   color: #e4e4e7;
   font-weight: 500;
 }
-.subtask-agent-tag {
-  font-size: 0.7rem;
-  color: var(--text-dim);
+.subtask-agent-tag,
+.subtask-agent {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: #cbd5e1;
   font-family: "SF Mono", Consolas, monospace;
+  display: inline-flex;
+  align-items: center;
+  justify-self: center;
+  gap: 5px;
+  line-height: 1;
+}
+.subtask-agent-icon,
+.subtask-agent .icon,
+.subtask-agent-tag .icon {
+  font-size: 1.05rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+}
+.subtask-card-row .subtask-agent-tag {
+  font-size: 0.74rem;
+  gap: 4px;
+}
+.subtask-card-row .subtask-agent-icon {
+  font-size: 0.85rem;
+  line-height: 1;
 }
 .subtask-badge {
-  font-size: 0.68rem;
+  font-size: 0.78rem;
   font-weight: 650;
-  padding: 1px 6px;
-  border-radius: 4px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  justify-self: end;
+  line-height: 1.1;
 }
-.sub-backlog .subtask-badge { color: #94a3b8; background: rgba(148, 163, 184, 0.1); }
+.sub-backlog .subtask-badge { color: #818cf8; background: rgba(63, 87, 204, 0.22); border: 1px solid rgba(63, 87, 204, 0.35); }
 .sub-working .subtask-badge { color: #f59e0b; background: rgba(245, 158, 11, 0.12); }
 .sub-testing .subtask-badge { color: #38bdf8; background: rgba(56, 189, 248, 0.12); }
 .sub-review .subtask-badge { color: #a78bfa; background: rgba(167, 139, 250, 0.12); }
@@ -1540,32 +1928,75 @@ body.sidebar-collapsed .sidebar-settings {
 .modal-subtasks-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   margin-top: 8px;
   margin-bottom: 16px;
 }
 .modal-subtask-card {
-  padding: 10px 12px;
-  border-radius: 8px;
+  padding: 12px 16px;
+  border-radius: 10px;
   background: var(--card);
   border: 1px solid var(--border);
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 16px;
+  box-sizing: border-box;
+}
+.modal-subtask-card .subtask-info {
   display: flex;
   flex-direction: column;
   gap: 4px;
-}
-.modal-subtask-card .subtask-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  min-width: 0;
 }
 .modal-subtask-card .subtask-id {
+  display: inline-flex;
+  align-items: center;
   font-family: "SF Mono", Consolas, monospace;
-  font-size: 0.75rem;
+  font-size: 0.76rem;
   color: var(--text-dim);
+  line-height: 1.2;
 }
 .modal-subtask-card .subtask-item-title {
-  font-size: 0.86rem;
+  font-size: 0.9rem;
   font-weight: 600;
   color: var(--text);
+  line-height: 1.35;
+  margin: 0;
+  padding: 0;
 }
+.modal-subtask-card .subtask-agent {
+  align-self: center;
+}
+.modal-subtask-card .subtask-badge {
+  align-self: center;
+}
+
+/* Modal scroll header actions */
+.modal-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.modal-quick-scroll-btn {
+  background: #1e293b;
+  border: 1px solid #38bdf8;
+  color: #38bdf8;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.modal-quick-scroll-btn:hover {
+  background: #0284c7;
+  color: #ffffff;
+  border-color: #60a5fa;
+}
+
+
