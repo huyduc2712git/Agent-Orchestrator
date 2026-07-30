@@ -609,6 +609,38 @@ body.sidebar-collapsed .sidebar-settings {
   align-items: center;
   gap: 4px;
 }
+.card-agent-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.76rem;
+  font-weight: 500;
+  color: #a1a1aa;
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+.card-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+  padding: 2px 7px;
+  border-radius: 6px;
+}
+.card-tag.tag-custom {
+  color: #60a5fa;
+  background: rgba(96, 165, 250, 0.12);
+  border: 1px solid rgba(96, 165, 250, 0.25);
+  font-family: "SF Mono", Consolas, monospace;
+}
+.card-tag.tag-bug {
+  color: #f87171;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+}
 .pill {
   display: inline-flex;
   align-items: center;
@@ -786,12 +818,12 @@ body.sidebar-collapsed .sidebar-settings {
   display: flex; align-items: center; justify-content: center;
   font-weight: 700; font-size: 1.15rem; flex-shrink: 0;
 }
-.avatar-jarvis { background: #1a2233; color: #60a5fa; border: 1px solid #2c3b59; }
+.avatar-jarvis, .avatar-conan { background: #1a2233; color: #60a5fa; border: 1px solid #2c3b59; }
 .avatar-coulson { background: #1c212c; color: #94a3b8; border: 1px solid #2d3545; }
-.avatar-stark { background: #2a1b14; color: #fb923c; border: 1px solid #472b1d; }
-.avatar-banner { background: #211633; color: #a78bfa; border: 1px solid #392557; }
-.avatar-hawkeye { background: #12241a; color: #4ade80; border: 1px solid #1f402c; }
-.avatar-pepper { background: #2d1624; color: #f472b6; border: 1px solid #4a243b; }
+.avatar-stark, .avatar-kid { background: #2a1b14; color: #fb923c; border: 1px solid #472b1d; }
+.avatar-banner, .avatar-agasa { background: #211633; color: #a78bfa; border: 1px solid #392557; }
+.avatar-hawkeye, .avatar-heiji { background: #12241a; color: #4ade80; border: 1px solid #1f402c; }
+.avatar-pepper, .avatar-haibara { background: #2d1624; color: #f472b6; border: 1px solid #4a243b; }
 .avatar-operator { background: #1f1f23; color: #a1a1aa; border: 1px solid #333338; }
 .avatar-system { background: #2a2115; color: #fbbf24; border: 1px solid #423018; }
 .avatar-user { background: #1f1f23; color: #a1a1aa; border: 1px solid #333338; }
@@ -854,14 +886,16 @@ body.sidebar-collapsed .sidebar-settings {
   box-sizing: border-box;
 }
 .msg-bubble.jarvis-bubble {
-  width: 100%;
+  width: fit-content;
+  max-width: 100%;
   background: #111320;
   border: 1px solid #1e2238;
   border-radius: 16px;
   border-top-left-radius: 4px;
 }
 .msg-bubble.system-bubble {
-  width: 100%;
+  width: fit-content;
+  max-width: 100%;
   background: #171512;
   border: 1px solid #332818;
   border-radius: 16px;
@@ -928,47 +962,52 @@ body.sidebar-collapsed .sidebar-settings {
 
 /* Composer box */
 .chat-composer {
-  display: flex; flex-direction: column; gap: 10px;
-  margin: 0 28px 16px;
-  padding: 14px 16px 10px;
-  background: #0d0f19;
-  border: 1px solid #1e2238;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 12px 24px 20px 24px;
+  padding: 16px 20px 12px;
+  background: #111422;
+  border: 1px solid #232842;
   border-radius: 16px;
   flex-shrink: 0;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
   transition: border-color 0.2s, box-shadow 0.2s;
 }
 .chat-composer:focus-within {
   border-color: #3b82f6;
-  box-shadow: 0 0 16px rgba(59, 130, 246, 0.2);
+  box-shadow: 0 0 20px rgba(59, 130, 246, 0.25);
 }
 .chat-composer textarea {
   width: 100%; resize: none; border: none; background: transparent;
-  color: #f8fafc; font: inherit; font-size: 0.92rem;
+  color: #f8fafc; font: inherit; font-size: 0.95rem; font-weight: 500;
   line-height: 1.6; outline: none;
   min-height: 48px; max-height: 140px;
   overflow-y: auto; padding: 0; box-sizing: border-box;
 }
-.chat-composer textarea::placeholder { color: #475569; }
+.chat-composer textarea::placeholder {
+  color: #818cf8; opacity: 0.85; font-weight: 450;
+}
 
 .composer-toolbar {
   display: flex; align-items: center; justify-content: space-between;
-  border-top: 1px solid #181b2c; padding-top: 8px; margin-top: 4px;
+  border-top: 1px solid #1e2338; padding-top: 10px; margin-top: 4px;
 }
 .toolbar-left { display: flex; align-items: center; gap: 10px; }
 .toolbar-right { display: flex; align-items: center; gap: 12px; }
 
 .icon-btn-ghost {
-  background: transparent; border: none; color: #64748b;
+  background: transparent; border: none; color: #94a3b8;
   cursor: pointer; display: flex; align-items: center; justify-content: center;
   padding: 4px; border-radius: 6px; transition: color 0.15s, background 0.15s;
 }
 .icon-btn-ghost:hover { color: #f8fafc; background: #1e2238; }
 
 .model-pill {
-  font-size: 0.74rem; color: #64748b;
+  font-size: 0.76rem; color: #94a3b8; font-weight: 500;
 }
 .key-hint {
-  font-size: 0.74rem; color: #475569; font-weight: 500;
+  font-size: 0.76rem; color: #64748b; font-weight: 500;
 }
 
 .send-btn {

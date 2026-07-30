@@ -50,10 +50,12 @@ async def main():
     print("RUNTIME TEST PASSED")
 
 
-asyncio.run(main())
 
-if store._conn is not None:
-    store._conn.close()
-    store._conn = None
-config.DB_PATH.unlink(missing_ok=True)
-shutil.rmtree(sandbox, ignore_errors=True)
+if __name__ == "__main__":
+    asyncio.run(main())
+    
+    if store._conn is not None:
+        store._conn.close()
+        store._conn = None
+    config.DB_PATH.unlink(missing_ok=True)
+    shutil.rmtree(sandbox, ignore_errors=True)

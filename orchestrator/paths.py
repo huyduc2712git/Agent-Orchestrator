@@ -131,7 +131,7 @@ def resolve_project_dir(
       2. active project_dir nếu KHÔNG nằm trong Orchestrator
       3. projects_root/slug (Settings hoặc default ngoài Orchestrator)
 
-    Trả (path, reason) — reason ngắn để Jarvis báo user.
+    Trả (path, reason) — reason ngắn để Conan báo user.
     """
     slug = (slug or "project").strip() or "project"
     if explicit and is_plausible_fs_path(explicit):

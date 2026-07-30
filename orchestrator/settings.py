@@ -35,11 +35,11 @@ ROLE_LABELS = {
     "summary": "Summary / Memory",
 }
 AGENT_ROLE = {
-    "jarvis": "planner",
-    "stark": "coder",
-    "banner": "coder",
-    "hawkeye": "critic",
-    "pepper": "summary",
+    "conan": "planner",
+    "kid": "coder",
+    "agasa": "coder",
+    "heiji": "critic",
+    "haibara": "summary",
 }
 
 

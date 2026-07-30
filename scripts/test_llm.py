@@ -40,4 +40,6 @@ async def main():
         print("\nTOOL CALLING: NOT USED (may need text fallback)")
 
 
-asyncio.run(main())
+
+if __name__ == "__main__":
+    asyncio.run(main())

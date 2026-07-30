@@ -52,7 +52,7 @@ def _build_worker_prompt(task: Task) -> str:
               "vào deliverable để người dùng bấm vào xem.",
               "Hoàn thành công việc, post_message deliverable, rồi tổng kết bằng text."]
 
-    if task.assignee == "hawkeye":
+    if task.assignee == "heiji":
         parts += [
             "",
             "=== VISUAL QA CHECKLIST (bắt buộc) ===",
@@ -68,7 +68,7 @@ def _build_worker_prompt(task: Task) -> str:
             "Hướng fix ghi rõ: (1) set project api_base + Orchestrator proxy /api, "
             "(2) hoặc rewrite FE gọi absolute API URL backend, (3) hoặc Vite proxy. "
             "create_bug_ticket kèm repro + hướng fix (bắt buộc khi FAIL) — KHÔNG PASS khi còn lỗi. "
-            "Jarvis không tạo bug; chỉ Final Review sau khi bạn PASS.",
+            "Conan không tạo bug; chỉ Final Review sau khi bạn PASS.",
             "2. figma_get nếu description có link Figma — lấy màu/font/layout spec.",
             "3. screenshot_url: desktop top + mobile top + ít nhất 1 interaction shot (tab click).",
             "4. inspect_render: chạy CSS/RENDER VERIFICATION table (brand_hex, body_bg_hex từ Figma nếu có).",
@@ -98,10 +98,10 @@ def _build_worker_prompt(task: Task) -> str:
             "E. deliverable ghi: Live URL UI + API direct URL + API same-origin URL + status từng cái",
         ]
 
-    if task.assignee in ("stark", "banner"):
+    if task.assignee in ("kid", "agasa"):
         parts += [
             "",
-            "=== KHI PHÁT HIỆN LỖI (Stark/Banner) ===",
+            "=== KHI PHÁT HIỆN LỖI (Kid/Agasa) ===",
             "Không bỏ qua 4xx/5xx. Phải: (1) tái hiện bằng http_get, (2) chẩn đoán root cause ngắn, "
             "(3) sửa nếu trong phạm vi task HOẶC create_bug_ticket với hướng fix cụ thể, "
             "(4) post_message evidence. UI đẹp ≠ xong nếu API same-origin fail.",
@@ -149,7 +149,7 @@ async def _run_worker(task: Task) -> None:
             else:
                 store.set_status(task.id, "blocked", task.assignee)
                 store.add_event(task.id, "system", "system", f"Agent gặp lỗi: {e}")
-                store.add_chat("jarvis", f"⚠️ {task.id} ({task.title}) bị blocked do lỗi: {str(e)[:200]}")
+                store.add_chat("conan", f"⚠️ {task.id} ({task.title}) bị blocked do lỗi: {str(e)[:200]}")
         finally:
             _in_flight.discard(task.id)
 
@@ -161,7 +161,7 @@ async def _run_worker(task: Task) -> None:
 
 
 def auto_recover_stuck_and_blocked_tasks() -> None:
-    """Jarvis Auto-Recovery Patrol — Quét định kỳ mỗi 2 phút:
+    """Conan Auto-Recovery Patrol — Quét định kỳ mỗi 2 phút:
     1. Reset subtask/task bị in_progress mà không nằm trong _in_flight (bị kẹt tiến trình).
     2. Tự động rerun subtask/task bị blocked (tối đa 3 lần retry).
     """
@@ -179,10 +179,10 @@ def auto_recover_stuck_and_blocked_tasks() -> None:
             try:
                 updated_dt = datetime.fromisoformat(t.updated_at)
                 if (now_utc - updated_dt).total_seconds() > 120:
-                    log.info("Jarvis Auto-Recovery: Resetting stuck in_progress task %s (%s) -> backlog", t.id, t.title)
-                    store.add_event(t.id, "jarvis", "system", "Jarvis Auto-Recovery: Phát hiện task bị kẹt tiến trình -> Tự động khôi phục chạy lại.")
-                    store.set_status(t.id, "backlog", "jarvis")
-                    store.add_chat("jarvis", f"🔄 Jarvis Auto-Recovery: Tự động kích hoạt lại {t.id} ({t.title}) do bị dừng tiến trình.")
+                    log.info("Conan Auto-Recovery: Resetting stuck in_progress task %s (%s) -> backlog", t.id, t.title)
+                    store.add_event(t.id, "conan", "system", "Conan Auto-Recovery: Phát hiện task bị kẹt tiến trình -> Tự động khôi phục chạy lại.")
+                    store.set_status(t.id, "backlog", "conan")
+                    store.add_chat("conan", f"🔄 Conan Auto-Recovery: Tự động kích hoạt lại {t.id} ({t.title}) do bị dừng tiến trình.")
             except Exception:
                 pass
 
@@ -201,40 +201,40 @@ def auto_recover_stuck_and_blocked_tasks() -> None:
             final_blobs = [
                 e.message.upper()
                 for e in events[-30:]
-                if e.agent == "jarvis" and "FINAL REVIEW" in e.message.upper()
+                if e.agent == "conan" and "FINAL REVIEW" in e.message.upper()
             ]
             if any(orchestrator._parse_jarvis_verdict(m) for m in final_blobs):
                 log.info("Auto-Recovery: %s có Final Review APPROVED — đóng task thay vì giữ blocked", t.id)
                 for st in store.list_tasks(parent_id=t.id):
                     if st.status in ("testing", "review"):
-                        store.set_status(st.id, "done", "jarvis")
+                        store.set_status(st.id, "done", "conan")
                     elif st.status in ("blocked", "failed", "backlog", "in_progress"):
                         # về testing rồi done (state machine không cho blocked→done trực tiếp)
                         if st.status in ("blocked", "failed"):
-                            store.set_status(st.id, "backlog", "jarvis")
+                            store.set_status(st.id, "backlog", "conan")
                         if store.get_task(st.id).status == "backlog":
-                            store.set_status(st.id, "in_progress", "jarvis")
+                            store.set_status(st.id, "in_progress", "conan")
                         cur = store.get_task(st.id)
                         if cur and cur.status == "in_progress":
-                            store.set_status(st.id, "testing", "jarvis")
-                        store.set_status(st.id, "done", "jarvis")
+                            store.set_status(st.id, "testing", "conan")
+                        store.set_status(st.id, "done", "conan")
                 # Parent: blocked → backlog → in_progress → testing → done
-                store.set_status(t.id, "backlog", "jarvis")
-                store.set_status(t.id, "in_progress", "jarvis")
-                store.set_status(t.id, "testing", "jarvis")
-                store.set_status(t.id, "done", "jarvis")
+                store.set_status(t.id, "backlog", "conan")
+                store.set_status(t.id, "in_progress", "conan")
+                store.set_status(t.id, "testing", "conan")
+                store.set_status(t.id, "done", "conan")
                 store.add_event(
-                    t.id, "jarvis", "system",
+                    t.id, "conan", "system",
                     "Auto-Recovery: Final Review đã APPROVED — đóng task (bỏ qua QA FAIL cũ).",
                 )
                 store.add_chat(
-                    "jarvis",
+                    "conan",
                     f"✅ {t.id}: Final Review đã APPROVED nhưng task bị kẹt blocked do QA FAIL cũ — đã đóng task.",
                 )
                 continue
 
             blobs = [e.message.upper() for e in events[-20:]]
-            # Hawkeye FAIL nằm trên subtask testing — check luôn children
+            # Heiji FAIL nằm trên subtask testing — check luôn children
             for st in store.list_tasks(parent_id=t.id):
                 blobs.extend(e.message.upper() for e in store.list_events(st.id)[-8:])
             qa_failed = any(
@@ -249,12 +249,12 @@ def auto_recover_stuck_and_blocked_tasks() -> None:
                 if _task_retry_counts.get(t.id, 0) < 3:
                     _task_retry_counts[t.id] = 3  # chặn vòng auto-retry vô ích
                     store.add_event(
-                        t.id, "jarvis", "system",
+                        t.id, "conan", "system",
                         "Auto-Recovery: bỏ qua auto-retry — QA/Final review đã FAIL. "
                         "Cần builder fix rồi bấm '↺ Chạy lại'.",
                     )
                     store.add_chat(
-                        "jarvis",
+                        "conan",
                         f"⛔ {t.id} bị blocked vì QA/Review FAIL — không tự chạy lại closure. "
                         f"Sửa code (hoặc giao lại fix), rồi bấm '↺ Chạy lại' trên board.",
                     )
@@ -263,14 +263,14 @@ def auto_recover_stuck_and_blocked_tasks() -> None:
         retries = _task_retry_counts.get(t.id, 0)
         if retries < 3:
             _task_retry_counts[t.id] = retries + 1
-            log.info("Jarvis Auto-Recovery: Rerunning blocked task %s (%s) — Retry %s/3", t.id, t.title, retries + 1)
-            store.add_event(t.id, "jarvis", "system", f"Jarvis Auto-Recovery: Tự động chạy lại task bị blocked (Lần retry {retries + 1}/3).")
-            store.set_status(t.id, "backlog", "jarvis")
-            store.add_chat("jarvis", f"🔄 Jarvis Auto-Recovery: Task {t.id} ({t.title}) bị kẹt/lỗi -> Tự động chạy lại lần {retries + 1}/3.")
+            log.info("Conan Auto-Recovery: Rerunning blocked task %s (%s) — Retry %s/3", t.id, t.title, retries + 1)
+            store.add_event(t.id, "conan", "system", f"Conan Auto-Recovery: Tự động chạy lại task bị blocked (Lần retry {retries + 1}/3).")
+            store.set_status(t.id, "backlog", "conan")
+            store.add_chat("conan", f"🔄 Conan Auto-Recovery: Task {t.id} ({t.title}) bị kẹt/lỗi -> Tự động chạy lại lần {retries + 1}/3.")
         elif retries == 3:
             _task_retry_counts[t.id] = 4  # Đánh dấu đã thông báo
-            store.set_status(t.id, "failed", "jarvis")
-            store.add_chat("jarvis", f"⛔ Task {t.id} ({t.title}) đã fail 3 lần. Dừng tự động chạy lại. Task được đưa vào trạng thái Failed (thất bại).")
+            store.set_status(t.id, "failed", "conan")
+            store.add_chat("conan", f"⛔ Task {t.id} ({t.title}) đã fail 3 lần. Dừng tự động chạy lại. Task được đưa vào trạng thái Failed (thất bại).")
             log.warning("Task %s reached max retries (3) and is failed.", t.id)
 
             # Nếu là task cha, huỷ luôn các task con chưa hoàn thành
@@ -278,10 +278,10 @@ def auto_recover_stuck_and_blocked_tasks() -> None:
                 subtasks = store.list_tasks(parent_id=t.id)
                 for st in subtasks:
                     if st.status not in ("done", "archived", "failed"):
-                        store.set_status(st.id, "failed", "jarvis")
-                        store.add_event(st.id, "jarvis", "system", f"Task cha {t.id} đã thất bại, subtask tự động bị huỷ.")
+                        store.set_status(st.id, "failed", "conan")
+                        store.add_event(st.id, "conan", "system", f"Task cha {t.id} đã thất bại, subtask tự động bị huỷ.")
 
-    # 3. Jarvis kiểm tra toàn bộ tiến độ vòng đời task cha & tự động trigger closure khi subtasks xong
+    # 3. Conan kiểm tra toàn bộ tiến độ vòng đời task cha & tự động trigger closure khi subtasks xong
     parent_tasks = [t for t in store.list_tasks(include_archived=False) if not t.parent_id and t.status not in ("done", "archived", "failed")]
     for pt in parent_tasks:
         try:

@@ -8,7 +8,7 @@ MEMORY_FILE = config.MEMORY_DIR / "MEMORY.md"
 CONNECTIONS_FILE = config.WIKI_DIR / "connections.md"
 FEATURES_DIR = config.WIKI_DIR / "features"
 
-MEMORY_SEED = """# MEMORY.md — Trí nhớ dài hạn của Jarvis
+MEMORY_SEED = """# MEMORY.md — Trí nhớ dài hạn của Conan
 
 Ghi lại quyết định, pattern, bài học sau mỗi task. Mỗi entry một bullet, kèm ngày và task id.
 

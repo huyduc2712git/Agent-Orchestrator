@@ -9,7 +9,7 @@
       type="image/svg+xml"
       href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' rx='115' fill='%23843BFF'/><path d='M 135,360 C 115,250 150,100 260,100 C 370,100 400,180 395,250 C 400,260 430,265 460,270 C 490,275 480,320 455,315 C 420,310 400,310 385,330 C 375,365 360,390 340,405 C 315,415 295,390 280,390 C 265,390 245,425 220,415 C 195,405 185,375 170,380 C 155,385 125,400 135,360 Z' fill='%23FFFFFF'/><ellipse cx='265' cy='215' rx='17' ry='26' fill='%23000000'/><ellipse cx='335' cy='215' rx='17' ry='26' fill='%23000000'/></svg>"
     />
-    <link rel="stylesheet" href="/static/styles.css?v=44" />
+    <link rel="stylesheet" href="/static/styles.css?v=52" />
   </head>
   <body class="view-board-active">
     <div class="app-shell">
@@ -111,7 +111,7 @@
         <section class="view view-board" id="view-board">
           <header class="board-toolbar">
             <div class="board-toolbar-left">
-              <h1 class="board-title">Board</h1>
+              <h1 class="board-title">Task Boards</h1>
               <span class="board-subtitle" id="board-subtitle"
                 >Live agent sessions flowing from work → review → merge.</span
               >
@@ -162,9 +162,9 @@
           <div class="chat-shell">
             <header class="chat-header">
               <div class="chat-agent">
-                <span class="avatar avatar-jarvis">🎯</span>
+                <span class="avatar avatar-jarvis">🕵️‍♂️</span>
                 <div>
-                  <div class="chat-agent-name">Jarvis (Squad Lead)</div>
+                  <div class="chat-agent-name">Conan (Squad Lead / Orchestrator)</div>
                   <div class="chat-agent-role">Orchestrator AI Agent</div>
                 </div>
               </div>
@@ -176,7 +176,7 @@
               <textarea
                 id="chat-text"
                 rows="2"
-                placeholder="Nhập tin nhắn giao việc cho Jarvis... (Press Enter to send, Shift+Enter for newline)"
+                placeholder="Nhập tin nhắn giao việc cho Conan... (Press Enter to send, Shift+Enter for newline)"
               ></textarea>
               <div class="composer-toolbar">
                 <div class="toolbar-left">
@@ -198,8 +198,11 @@
                       />
                     </svg>
                   </button>
-                  <span class="model-pill"
-                    >Model: <strong>deepseek/deepseek-v4-flash</strong></span
+                  <span class="model-pill" id="chat-model-pill"
+                    >Model: <strong id="chat-model-name">—</strong></span
+                  >
+                  <span class="model-pill" id="chat-project-pill"
+                    >Project: <strong id="chat-project-name" style="color: #60a5fa;">— chưa chọn</strong></span
                   >
                 </div>
                 <div class="toolbar-right">
@@ -350,7 +353,7 @@
             <div class="panel-title">Thư mục gốc clone (Projects root)</div>
             <p class="settings-hint">
               Repo Git được clone <strong>ngoài</strong> thư mục Orchestrator để tránh nặng workspace.
-              Khi chat clone mà không ghi path, Jarvis sẽ hỏi — hoặc dùng gốc này + tên project.
+              Khi chat clone mà không ghi path, Conan sẽ hỏi — hoặc dùng gốc này + tên project.
             </p>
             <form class="token-form" id="projects-root-form" style="flex-wrap: wrap;">
               <input
@@ -422,6 +425,6 @@
       </div>
     </div>
 
-    <script src="/static/app.js?v=54"></script>
+    <script type="module" src="/static/js/main.js?v=57"></script>
   </body>
 </html>

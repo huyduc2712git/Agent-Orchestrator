@@ -22,7 +22,7 @@ ALLOWED = {
 }
 
 OPERATOR = "operator"
-JARVIS = "jarvis"
+PLANNER_AGENT = "conan"
 
 
 @dataclass
@@ -52,7 +52,7 @@ def request_transition(task: Task, new_status: str, actor: str) -> TransitionRes
             False,
             "Review normalized về testing — task này dùng agent-only review, trạng thái "
             "review được dành riêng cho operator review. Quy trình đúng: tester post PASS "
-            "evidence dạng message, Jarvis sẽ complete task từ testing.",
+            "evidence dạng message, Conan sẽ complete task từ testing.",
         )
 
     # Guard 2: từ review sang done chỉ operator được duyệt
@@ -66,18 +66,18 @@ def request_transition(task: Task, new_status: str, actor: str) -> TransitionRes
 
     # Guard 3: không tự approve việc của chính mình
     if new_status == "done":
-        if actor not in (OPERATOR, JARVIS):
+        if actor not in (OPERATOR, PLANNER_AGENT):
             return TransitionResult(
                 cur,
                 False,
                 f"{actor} không được tự đóng task. Post deliverable/PASS evidence, "
-                "Jarvis sẽ verify độc lập và đóng task.",
+                "Conan sẽ verify độc lập và đóng task.",
             )
-        if actor == JARVIS and task.assignee == JARVIS:
+        if actor == PLANNER_AGENT and task.assignee == PLANNER_AGENT:
             return TransitionResult(
                 cur,
                 False,
-                "Jarvis không được tự approve task do chính mình thực hiện — "
+                "Conan không được tự approve task do chính mình thực hiện — "
                 "cần agent khác hoặc operator xác nhận.",
             )
 
