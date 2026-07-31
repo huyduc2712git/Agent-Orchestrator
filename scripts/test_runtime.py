@@ -5,6 +5,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
 
 from orchestrator import config
 from orchestrator.agents.runtime import run_agent
@@ -21,18 +23,18 @@ async def main():
     task = store.create_task(
         "Tao file hello",
         "Tao file hello.txt",
-        assignee="stark",
+        assignee="kid",
         project_dir=str(sandbox),
-        created_by="jarvis",
+        created_by="conan",
     )
     result = await run_agent(
-        agent_name="stark",
+        agent_name="kid",
         system_prompt=(
-            "Bạn là Stark, builder agent. Bạn có tool thao tác file thật. "
+            "Bạn là Kid, builder agent. Bạn có tool thao tác file thật. "
             "Làm xong việc thì post_message deliverable rồi trả lời tổng kết ngắn."
         ),
         user_prompt=(
-            "Tạo file hello.txt với nội dung chính xác là 'Hello from Stark' "
+            "Tạo file hello.txt với nội dung chính xác là 'Hello from Kid' "
             "và file info.txt chứa danh sách file trong thư mục sau khi tạo."
         ),
         task=task,

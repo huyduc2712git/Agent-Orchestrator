@@ -111,7 +111,58 @@ export function updateChatModelPill() {
 export function resolveAssignee(t, subtasks = []) {
   if (!t) return "conan";
 
-  // Dynamic agent resolution based on task lifecycle status
+  const explicitCritics = ["akai", "amuro", "haibara", "heiji", "conan"];
+  const subs = subtasks.length
+    ? subtasks
+    : [...state.tasks.values()].filter((c) => c.parent_id && String(c.parent_id) === String(t.id));
+
+  if (subs.length) {
+    // 1. Ưu tiên subtask/bug đang chạy thực tế (in_progress)
+    let activeSub = subs.find((s) => s.status === "in_progress");
+    
+    // 2. Nếu không có cái nào in_progress, lấy subtask/bug đang ở bước testing/QA
+    if (!activeSub) {
+      activeSub = subs.find((s) => s.status === "testing");
+    }
+
+    // 3. Tiếp theo lấy subtask đang ở review hoặc blocked/failed
+    if (!activeSub) {
+      activeSub = subs.find((s) => ["review", "blocked", "failed"].includes(s.status));
+    }
+
+    if (activeSub) {
+      const subAssignee = (activeSub.assignee || "").toLowerCase();
+      
+      // Nếu subtask gán cho Critic (Akai, Amuro, Haibara, Heiji, Conan) -> Trả về đúng Critic đó
+      if (explicitCritics.includes(subAssignee)) {
+        return subAssignee;
+      }
+
+      // Nếu subtask/bug Builder đang chạy (in_progress) -> Trả về đúng Agent đó (Kid/Agasa/...)
+      if (activeSub.status === "in_progress") {
+        return activeSub.assignee || "kid";
+      }
+
+      // Nếu subtask Builder đang chờ/đang QA (testing) -> Heiji đang test
+      if (activeSub.status === "testing") {
+        return "heiji";
+      }
+
+      // Nếu subtask Builder đang ở bước Review -> Haibara review
+      if (activeSub.status === "review") {
+        return "haibara";
+      }
+
+      if (activeSub.assignee) return activeSub.assignee;
+    }
+  }
+
+  const tAssignee = (t.assignee || "").toLowerCase();
+  if (explicitCritics.includes(tAssignee)) {
+    return tAssignee;
+  }
+
+  // Dynamic agent resolution dựa theo trạng thái task cha
   if (t.status === "testing") return "heiji";
   if (t.status === "review") return "haibara";
   if (t.status === "done" || t.status === "blocked" || t.status === "failed") {
@@ -120,21 +171,12 @@ export function resolveAssignee(t, subtasks = []) {
 
   if (t.assignee && t.assignee.trim()) return t.assignee.trim();
 
-  const subs = subtasks.length ? subtasks : [...state.tasks.values()].filter((c) => c.parent_id === t.id);
-  if (subs.length) {
-    const activeSub = subs.find((s) => ["in_progress", "testing", "review", "blocked"].includes(s.status));
-    if (activeSub) {
-      if (activeSub.status === "testing") return "heiji";
-      if (activeSub.status === "review") return "haibara";
-      if (activeSub.assignee) return activeSub.assignee;
-    }
-  }
   return "kid";
 }
 
-export function cardTag(t) {
+export function cardTag(t, subtasks = []) {
   if (!t) return "";
-  const assigneeName = resolveAssignee(t);
+  const assigneeName = resolveAssignee(t, subtasks);
   const agent = assigneeName.toLowerCase();
   const info = AGENT_INFO[agent] || { icon: "🤖" };
   let html = `<span class="card-agent-tag" title="${escapeHtml(assigneeName)}">${info.icon} ${escapeHtml(assigneeName)}</span>`;

@@ -117,7 +117,7 @@ def create_task(
     if type == "bug":
         prefix = "bug"
     elif parent_id:
-        if assignee == "hawkeye" or type == "qa" or "qa" in [t.lower() for t in tags] or title.lower().startswith("qa"):
+        if assignee == "heiji" or type == "qa" or "qa" in [t.lower() for t in tags] or title.lower().startswith("qa"):
             prefix = "sqa"
         else:
             prefix = "sub"

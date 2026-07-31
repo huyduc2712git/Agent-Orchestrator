@@ -203,7 +203,7 @@ def auto_recover_stuck_and_blocked_tasks() -> None:
                 for e in events[-30:]
                 if e.agent == "conan" and "FINAL REVIEW" in e.message.upper()
             ]
-            if any(orchestrator._parse_jarvis_verdict(m) for m in final_blobs):
+            if any(orchestrator._parse_conan_verdict(m) for m in final_blobs):
                 log.info("Auto-Recovery: %s có Final Review APPROVED — đóng task thay vì giữ blocked", t.id)
                 for st in store.list_tasks(parent_id=t.id):
                     if st.status in ("testing", "review"):

@@ -3,6 +3,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
 
 from orchestrator import config
 from orchestrator.agents.tools import ToolContext
@@ -10,7 +12,7 @@ from orchestrator.board.models import Task
 
 task = Task(id="tsk-test", title="t", project="figma-test",
             project_dir=str(config.WORKSPACE_DIR / "projects" / "figma-test"))
-ctx = ToolContext("stark", task)
+ctx = ToolContext("kid", task)
 
 # 1. Link không đúng định dạng
 r1 = ctx.execute("figma_get", {"url": "https://example.com/abc"})

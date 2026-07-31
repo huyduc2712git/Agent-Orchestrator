@@ -46,7 +46,9 @@ def parse_repo(url: str) -> dict | None:
 
 
 def _run(cmd: list[str], cwd: Path | None = None, timeout: int = 180) -> tuple[int, str]:
+    import os
     try:
+        creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         proc = subprocess.run(
             cmd,
             cwd=str(cwd) if cwd else None,
@@ -55,6 +57,7 @@ def _run(cmd: list[str], cwd: Path | None = None, timeout: int = 180) -> tuple[i
             encoding="utf-8",
             errors="replace",
             timeout=timeout,
+            creationflags=creationflags,
         )
         out = ((proc.stdout or "") + ("\n" + proc.stderr if proc.stderr else "")).strip()
         return proc.returncode, out

@@ -386,22 +386,26 @@ class ToolContext:
             if "-WindowStyle" not in command:
                 command = re.sub(r"\bStart-Process\b", "Start-Process -WindowStyle Hidden", command, flags=re.IGNORECASE)
 
-        # 3. Tự động nhận diện lệnh chạy server ngầm (Start-Process / Start-Job hoặc dev/prod server)
-        server_pattern = r"\b(node|python|py|npm|npx|bun|yarn)\b.*\b(server|app\.py|main\.py|dev|start|preview|vite|next|uvicorn|fastapi)\b"
-        is_background = (
+        # 3. Tự động nhận diện lệnh chạy server ngầm (dev/prod server hoặc Start-Process/Start-Job)
+        is_one_off = (
+            "python -c" in command
+            or "py -c" in command
+            or "type " in command
+            or "cat " in command
+            or "echo " in command
+            or "pytest" in command
+            or "python test_" in command
+        )
+        server_pattern = r"\b(npm\s+(run\s+)?(dev|start)|yarn\s+(dev|start)|bun\s+(run\s+)?(dev|start)|vite|next\s+dev|uvicorn|fastapi\s+dev|node\s+server|python\s+-m\s+uvicorn|python\s+app\.py|python\s+main\.py)\b"
+        is_background = not is_one_off and (
             "Start-Process" in command
             or "Start-Job" in command
             or bool(re.search(server_pattern, command, re.IGNORECASE))
         )
 
         if is_background:
-            # Lưu lệnh gốc trước khi bọc Start-Process (để auto-start lần sau)
             original_cmd = command
-
-            # Nếu chưa dùng Start-Process mà gọi lệnh server trực tiếp, tự bọc Start-Process với -WindowStyle Hidden để chạy ngầm ẩn cửa sổ
-            if "Start-Process" not in command and "Start-Job" not in command:
-                log.info("Tự động bọc lệnh server sang Start-Process: %s", command)
-                command = f'Start-Process powershell -WindowStyle Hidden -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command {json.dumps(command)}"'
+            log.info("Khởi chạy background process ngầm: %s", command)
 
             try:
                 creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
@@ -426,6 +430,7 @@ class ToolContext:
                 return f"ERROR: không thể khởi chạy background process: {e}"
 
         try:
+            creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
             proc = subprocess.run(
                 ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
                 cwd=str(self.project_dir),
@@ -434,6 +439,7 @@ class ToolContext:
                 encoding="utf-8",
                 errors="replace",
                 timeout=config.COMMAND_TIMEOUT_SECONDS,
+                creationflags=creationflags,
             )
             out = (proc.stdout or "") + (("\n[stderr]\n" + proc.stderr) if proc.stderr else "")
             return f"exit_code={proc.returncode}\n{out.strip()}"
@@ -579,7 +585,7 @@ class ToolContext:
             project=self.task.project,
             project_dir=self.task.project_dir,
             parent_id=self.task.parent_id or self.task.id,
-            assignee="stark",
+            assignee="kid",
             tags=["discovered-issue", "bug"],
             severity=severity,
             repro_steps=repro_steps,
@@ -590,7 +596,7 @@ class ToolContext:
             self.task.id, self.agent, "system",
             f"Bug ticket {bug.id} đã được tạo và link related: {title}",
         )
-        return f"OK: đã tạo bug {bug.id} (gắn task cha, Stark fix) — đây là BUG ticket, không phải subtask."
+        return f"OK: đã tạo bug {bug.id} (gắn task cha, Kid fix) — đây là BUG ticket, không phải subtask."
 
     # --- git tools ---
 

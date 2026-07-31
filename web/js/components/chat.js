@@ -75,7 +75,7 @@ export function formatDurationPrecise(ms) {
 
 export function conanWorkStats(messages, index) {
   const m = messages[index];
-  if (!m || (m.role !== "conan" && m.role !== "jarvis" && m.role !== "system")) return null;
+  if (!m || (m.role !== "conan" && m.role !== "system")) return null;
 
   let userIdx = -1;
   for (let i = index - 1; i >= 0; i--) {
@@ -139,8 +139,8 @@ export function renderChatMessage(m, index) {
     row.className = "msg-row system-msg";
     row.innerHTML = `
       <span class="avatar avatar-system">⚙️</span>
-      <div class="msg-jarvis-wrapper">
-        <div class="msg-meta-jarvis">
+      <div class="msg-conan-wrapper">
+        <div class="msg-meta-conan">
           <span class="name" style="color: #eab308;">System / Board Patrol</span>
           ${timeStr ? `<span class="dot">•</span><span class="time">${escapeHtml(timeStr)}</span>` : ""}
           ${work ? `<span class="worked-badge" title="Thời gian thật từ tin nhắn user trước">${escapeHtml(work.label)}</span>` : ""}
@@ -157,7 +157,7 @@ export function renderChatMessage(m, index) {
 
   const isUser = m.role === "user";
   const row = document.createElement("div");
-  row.className = `msg-row ${isUser ? "user" : "jarvis"}`;
+  row.className = `msg-row ${isUser ? "user" : "conan"}`;
   const timeStr = formatTime(m.created_at);
 
   if (isUser) {
@@ -173,15 +173,15 @@ export function renderChatMessage(m, index) {
   } else {
     const work = conanWorkStats(state.chatMessages, index);
     row.innerHTML = `
-      <span class="avatar avatar-jarvis">🕵️‍♂️</span>
-      <div class="msg-jarvis-wrapper">
-        <div class="msg-meta-jarvis">
+      <span class="avatar avatar-conan">🕵️‍♂️</span>
+      <div class="msg-conan-wrapper">
+        <div class="msg-meta-conan">
           <span class="name">Conan</span>
           ${timeStr ? `<span class="dot">•</span><span class="time">${escapeHtml(timeStr)}</span>` : ""}
           <span class="model-badge">${escapeHtml(plannerModelLabel())}</span>
           ${work ? `<span class="worked-badge" title="Thời gian thật từ lúc bạn gửi đến phản hồi này">${escapeHtml(work.label)}</span>` : ""}
         </div>
-        <div class="msg-bubble jarvis-bubble">${formatMarkdownMessage(m.message)}</div>
+        <div class="msg-bubble conan-bubble">${formatMarkdownMessage(m.message)}</div>
       </div>`;
     if (state.workStartedAt) state.workStartedAt = null;
   }
@@ -201,9 +201,9 @@ export function setThinking(on) {
     if (!thinkRow) {
       thinkRow = document.createElement("div");
       thinkRow.id = "thinking-row";
-      thinkRow.className = "msg-row jarvis thinking";
+      thinkRow.className = "msg-row conan thinking";
       thinkRow.innerHTML = `
-        <span class="avatar avatar-jarvis">🕵️‍♂️</span>
+        <span class="avatar avatar-conan">🕵️‍♂️</span>
         <div class="msg-bubble thinking-bubble">
           <span class="thinking-text">Conan đang suy nghĩ...</span>
           <span class="typing-dots">
@@ -229,8 +229,8 @@ export async function loadChat() {
   state.chatMessages = (data.messages || []).filter((m) => m && m.message && m.message.trim());
   if (!state.chatMessages.length) {
     const w = document.createElement("div");
-    w.className = "msg-row jarvis";
-    w.innerHTML = `<span class="avatar avatar-jarvis">🕵️‍♂️</span><div><div class="msg-bubble">Ask me something!</div></div>`;
+    w.className = "msg-row conan";
+    w.innerHTML = `<span class="avatar avatar-conan">🕵️‍♂️</span><div><div class="msg-bubble">Ask me something!</div></div>`;
     box.appendChild(w);
   } else {
     state.chatMessages.forEach((m, i) => renderChatMessage(m, i));

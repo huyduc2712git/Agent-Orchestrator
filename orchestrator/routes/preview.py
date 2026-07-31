@@ -90,7 +90,7 @@ def _find_preview_file(serve_root: Path, project_dir: Path, rel_path: str) -> Pa
         try:
             root_res = root.resolve()
             cand = (root / rel).resolve()
-        except OSError:
+        except (OSError, ValueError):
             continue
         if not str(cand).startswith(str(root_res)):
             continue
@@ -118,6 +118,55 @@ def _find_preview_file(serve_root: Path, project_dir: Path, rel_path: str) -> Pa
     return None
 
 
+# FIX bug-2208: source disclosure - the static preview host used to serve
+# EVERY file inside the project dir, so GET /preview/<project>/server.cjs
+# returned the full backend source, and server*.log / verify*.txt leaked
+# internal runtime info (ports, absolute Windows paths, past bug notes),
+# package.json etc. Preview is meant for public static assets (index.html,
+# dist, .css/.js/.png/...) only, so requests are checked against a
+# deny-list of internal extensions/names BEFORE any file resolution.
+_PREVIEW_DENY_EXT = frozenset({
+    ".cjs", ".mjs", ".log", ".py", ".pyc", ".pem", ".key", ".p12", ".pfx",
+    ".lock", ".bak", ".sql", ".sqlite", ".sqlite3", ".db",
+})
+_PREVIEW_DENY_FILES = frozenset({
+    "package.json", "package-lock.json", "npm-shrinkwrap.json",
+    "yarn.lock", "pnpm-lock.yaml", "verify.txt", "ping_check.txt",
+})
+_PREVIEW_DENY_DIRS = ("node_modules", ".git", ".svn", ".hg")
+
+
+def _is_public_preview_asset(rel_path: str) -> bool:
+    """Allow-list for the public static preview host.
+
+    Returns False for anything that is not a public static asset: backend
+    source (server.cjs), runtime logs (server*.log), verify artifacts
+    (verify.txt, ping_check.txt), manifests (package.json), dotfiles/secrets
+    (.env*) and dependency/VCS dirs (node_modules, .git). Returns True for
+    index.html and ordinary static assets.
+    """
+    p = rel_path.strip("/") or ""
+    if not p:
+        return True
+    parts = [x for x in p.split("/") if x not in ("", ".")]
+    if not parts or ".." in parts:
+        return False
+    if parts[0] in _PREVIEW_DENY_DIRS:
+        return False
+    name = parts[-1]
+    if name.startswith("."):
+        return False  # dotfile / secret (e.g. .env, .env.local)
+    ext = Path(name).suffix.lower()
+    if ext in _PREVIEW_DENY_EXT:
+        return False
+    if name in _PREVIEW_DENY_FILES:
+        return False
+    # backend runtime artifacts (server.cjs, server.log, verify.txt, ...)
+    if name.startswith("server.") or name.startswith("verify"):
+        return False
+    return True
+
+
 @router.get("/preview/{project}")
 async def preview_project_noslash(project: str):
     return RedirectResponse(url=f"/preview/{project}/", status_code=307)
@@ -130,6 +179,12 @@ async def preview_project_index(project: str):
 
 @router.get("/preview/{project}/{file_path:path}")
 async def preview(project: str, file_path: str = ""):
+    # FIX bug-8991: reject null byte in URL path BEFORE any pathlib operation.
+    # Starlette decodes %00 -> "\x00"; (root / rel).resolve() then raises
+    # ValueError("embedded null character in path"), which is NOT an OSError,
+    # so it escaped the try/except below and uvicorn replied 500.
+    if "\x00" in file_path or "\x00" in project:
+        return JSONResponse({"error": "bad request: null byte in path"}, status_code=400)
     project_dir = _resolve_preview_project_dir(project)
     if project_dir is None:
         return JSONResponse(
@@ -139,6 +194,13 @@ async def preview(project: str, file_path: str = ""):
 
     serve_root = _preview_serve_root(project_dir)
     rel_path = file_path.strip("/") or "index.html"
+    # FIX bug-2208: deny-list before resolving/serving - backend source, logs
+    # and verify artifacts must never be exposed by the public preview host.
+    if not _is_public_preview_asset(rel_path):
+        return JSONResponse(
+            {"error": "forbidden: not a public preview asset"},
+            status_code=403,
+        )
     target = _find_preview_file(serve_root, project_dir, rel_path)
 
     if target and target.suffix.lower() in (".html", ".htm"):
@@ -214,6 +276,12 @@ async def _resolve_project_api_base(slug: str) -> str | None:
 
 @router.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"])
 async def proxy_project_api(path: str, request: Request):
+    # FIX bug-8991: reject null byte in URL path BEFORE building the upstream
+    # URL. httpx.build_request() raises httpx.InvalidURL for "\x00" in the URL;
+    # InvalidURL is NOT an httpx.HTTPError subclass, so it escaped the
+    # except below and uvicorn replied 500.
+    if "\x00" in path:
+        return JSONResponse({"error": "bad request: null byte in path"}, status_code=400)
     slug = _project_from_referer(request.headers.get("referer", ""))
     if not slug:
         slug = settings.active_project() or ""
@@ -242,7 +310,7 @@ async def proxy_project_api(path: str, request: Request):
     try:
         upstream = client.build_request(request.method, url, headers=headers, content=body or None)
         resp = await client.send(upstream, stream=True)
-    except httpx.HTTPError as e:
+    except (httpx.HTTPError, httpx.InvalidURL, ValueError) as e:
         await client.aclose()
         log.warning("API proxy %s -> %s failed: %s", path, api_base, e)
         return JSONResponse({"error": f"proxy failed: {e}", "target": url}, status_code=502)

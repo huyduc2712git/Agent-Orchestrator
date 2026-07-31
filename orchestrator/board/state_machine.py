@@ -2,9 +2,9 @@
 
 Nguyên tắc (theo docs/design.md + log jts-0001):
 - Trạng thái `review` chỉ dành cho task có review_type=operator. Agent set `review`
-  trên task agent-only sẽ bị normalize về `testing` kèm message giải thích (kiểu Heimdall).
+  trên task agent-only sẽ bị normalize về `testing` kèm message giải thích.
 - Task operator-review ở trạng thái `review` chỉ operator mới được duyệt sang `done`.
-- Agent không tự set `done` cho task mình làm — chỉ jarvis (closure flow) hoặc operator.
+- Agent không tự set `done` cho task mình làm — chỉ conan (closure flow) hoặc operator.
 """
 from dataclasses import dataclass
 

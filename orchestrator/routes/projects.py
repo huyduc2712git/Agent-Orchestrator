@@ -28,9 +28,11 @@ def get_git_info(project_dir: str) -> dict:
     if not project_dir or not os.path.exists(os.path.join(project_dir, ".git")):
         return {"is_git_repo": False, "has_uncommitted_changes": False, "provider": "none", "remote_url": ""}
     try:
+        creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         res = subprocess.run(
             ["git", "remote", "get-url", "origin"],
-            cwd=project_dir, capture_output=True, text=True, check=False, timeout=3
+            cwd=project_dir, capture_output=True, text=True, check=False, timeout=3,
+            creationflags=creationflags
         )
         remote_url = res.stdout.strip()
         url_lower = remote_url.lower()
@@ -45,7 +47,8 @@ def get_git_info(project_dir: str) -> dict:
 
         st_res = subprocess.run(
             ["git", "status", "--porcelain"],
-            cwd=project_dir, capture_output=True, text=True, check=False, timeout=3
+            cwd=project_dir, capture_output=True, text=True, check=False, timeout=3,
+            creationflags=creationflags
         )
         has_uncommitted_changes = bool(st_res.stdout.strip())
 

@@ -55,6 +55,8 @@ const AGENT_ROLE_TITLE = {
   kid: "Kaito Kid (Frontend Builder)",
   agasa: "Agasa (Backend Specialist)",
   heiji: "Heiji (Visual QA)",
+  akai: "Shuichi Akai (Security Reviewer)",
+  amuro: "Amuro (Penetration Tester)",
   system: "System",
   operator: "Operator",
 };
@@ -148,7 +150,7 @@ export function renderEvent(e) {
     e.message.includes("|") || 
     e.message.includes("##") || 
     e.message.includes("http") || 
-    agent === "pepper"
+    agent === "haibara" || agent === "akai" || agent === "amuro"
   );
 
   const bodyContent = isStructured

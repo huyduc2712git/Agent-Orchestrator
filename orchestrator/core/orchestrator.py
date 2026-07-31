@@ -55,7 +55,7 @@ Phân tích và trả về DUY NHẤT một JSON object (không giải thích th
   }},
   "subtasks": [
     {{"title": "...", "description": "<yêu cầu chi tiết + ràng buộc kỹ thuật, agent không được hỏi lại>",
-      "agent": "<kid|agasa|heiji|haibara>", "depends_on": [<index các subtask phải xong trước, tính từ 0>],
+      "agent": "<kid|agasa|heiji|haibara|akai|amuro>", "depends_on": [<index các subtask phải xong trước, tính từ 0>],
       "tags": []}}
   ]
 }}
@@ -82,6 +82,7 @@ Quy tắc lập kế hoạch:
       cùng path /api/... trên host Live URL (same-origin trình duyệt).
   UI đẹp / backend direct OK mà preview host /api 404 = CHƯA XONG — plan phải cover proxy/api_base hoặc bugfix.
 - KHÔNG CẦN tạo subtask QA riêng ("QA verify...") cho Heiji, vì QA đã là QUY TRÌNH TỰ ĐỘNG CÓ SẴN của hệ thống (khi Kid/Agasa làm xong, task sẽ tự động chuyển sang In Testing / QA để Heiji vào test).
+- Security (Akai) và Pentest (Amuro) cũng được hệ thống tự tạo SAU khi QA PASS — KHÔNG tạo subtask akai/amuro trong plan ban đầu.
 - Chỉ tạo subtask cho các công việc phát triển thật (Kid code UI/Scaffolding, Agasa làm Backend/API/Data). Subtask nhỏ 1 bước -> 1 subtask. Task phức tạp -> chia subtask chain.
 - Mô tả subtask phải đầy đủ context (steer message). Tuân thủ hướng dẫn Build/QA trong Link context ở trên (đưa nguyên văn URL, tags).
 - Việc liên quan DB migration / security / deploy production: thêm tag tương ứng ("db-migration", "security", "deploy-prod") để hệ thống bắt buộc operator review.
@@ -475,6 +476,23 @@ async def handle_chat(user_message: str, project: str | None = None) -> None:
 
 # ---------- Phase 5: closure ----------
 
+
+def _collect_deliverables(subtasks: list[Task]) -> str:
+    """Tổng hợp thông tin subtask và deliverable/comment mới nhất của từng subtask."""
+    if not subtasks:
+        return "(Không có subtask)"
+    items = []
+    for t in subtasks:
+        events = store.list_events(t.id)
+        comments = [ev.message for ev in events if ev.kind == "comment" and ev.message]
+        latest = comments[-1] if comments else "(chưa có comment/báo cáo)"
+        items.append(
+            f"- Subtask {t.id} [{t.assignee or 'chưa gán'}] ({t.status}): {t.title}\n"
+            f"  Deliverable / Báo cáo: {latest}"
+        )
+    return "\n\n".join(items)
+
+
 def _qa_verdict(parent_id: str) -> tuple[str, str]:
     """Lấy verdict QA từ các comment của heiji (mới nhất trước). Trả về (PASS|FAIL|UNKNOWN, text)."""
     subtasks = store.list_tasks(parent_id=parent_id)
@@ -518,7 +536,204 @@ def _qa_verdict(parent_id: str) -> tuple[str, str]:
     return "UNKNOWN", "(chưa có báo cáo QA)"
 
 
-def _parse_jarvis_verdict(result: str) -> bool:
+def _critic_verdict(task_id: str, agent: str, heading: str) -> tuple[str, str]:
+    """Parse PASS/FAIL từ comment của critic agent (Akai/Amuro). Trả về (PASS|FAIL|UNKNOWN, text)."""
+    events = store.list_events(task_id)
+    comments = [e for e in events if e.kind == "comment" and e.agent == agent]
+    if not comments:
+        return "UNKNOWN", ""
+    text = comments[-1].message or ""
+    up = text.upper()
+    head = heading.upper()
+    if f"{head} — PASS" in up or f"{head} - PASS" in up:
+        return "PASS", text
+    if f"{head} — FAIL" in up or f"{head} - FAIL" in up:
+        return "FAIL", text
+    if re.search(r"VERDICT:\s*PASS", up):
+        return "PASS", text
+    if re.search(r"VERDICT:\s*FAIL", up):
+        return "FAIL", text
+    return "UNKNOWN", text
+
+
+def _ensure_parent_testing(parent: Task) -> None:
+    if parent.status not in ("testing", "review", "done", "archived", "failed"):
+        try:
+            if parent.status == "in_progress":
+                store.set_status(parent.id, "testing", "conan")
+            elif parent.status == "backlog":
+                store.set_status(parent.id, "in_progress", "conan")
+                store.set_status(parent.id, "testing", "conan")
+            parent.status = "testing"
+        except Exception:
+            pass
+
+
+def _gate_security_pentest(parent: Task, subtasks: list[Task]) -> str:
+    """Gate tuần tự Akai → Amuro trước Final Review.
+
+    Returns:
+        "proceed" — cả hai PASS, được chạy Conan
+        "wait" — đã tạo/đang chờ subtask hoặc đã giao bug
+    """
+    preview_url = f"{config.BASE_URL}/preview/{parent.project}/"
+    current = store.list_tasks(parent_id=parent.id)
+
+    security_tasks = [t for t in current if t.assignee == "akai"]
+    if not security_tasks:
+        sec = store.create_task(
+            title=f"Security Review — {parent.title}",
+            description=(
+                f"Review bảo mật cho {parent.id}. Không sửa code, chỉ báo cáo.\n"
+                f"Preview URL: {preview_url}\n"
+                "Kết thúc bằng post_message '## Security Review — PASS' hoặc "
+                "'## Security Review — FAIL' (+ create_bug_ticket cho Critical/High)."
+            ),
+            assignee="akai",
+            project=parent.project,
+            project_dir=parent.project_dir,
+            parent_id=parent.id,
+            created_by="conan",
+            tags=["security-review"],
+        )
+        _ensure_parent_testing(parent)
+        store.add_chat(
+            "conan",
+            f"{parent.id}: QA PASS — giao Akai Security Review ({sec.id}) trước Final Review.",
+        )
+        return "wait"
+
+    sec = security_tasks[-1]
+    if sec.status in ("backlog", "in_progress", "blocked"):
+        return "wait"
+
+    sec_verdict, sec_text = _critic_verdict(sec.id, "akai", "SECURITY REVIEW")
+    if sec_verdict == "UNKNOWN" and "sec-retry" not in (sec.tags or []):
+        tags = list(sec.tags or [])
+        tags.append("sec-retry")
+        store.update_task_fields(sec.id, tags=tags)
+        store.set_status(sec.id, "in_progress", "conan")
+        store.set_status(sec.id, "backlog", "conan")
+        store.add_event(sec.id, "conan", "system", "Báo cáo Security chưa có PASS/FAIL rõ — Akai chạy lại.")
+        store.add_chat("conan", f"{parent.id}: Akai chưa có verdict rõ — requeue Security Review.")
+        return "wait"
+
+    if sec_verdict == "FAIL":
+        open_bugs = _open_related_bugs(parent)
+        if open_bugs:
+            n = _assign_bugs_to_kid(parent, open_bugs)
+            if n < 0:
+                store.set_status(parent.id, "blocked", "conan")
+                store.add_chat(
+                    "conan",
+                    f"{parent.id}: Security FAIL + còn bug sau {MAX_FIX_ROUNDS} round — cần bạn xem board.",
+                )
+                return "wait"
+            store.add_chat(
+                "conan",
+                f"{parent.id}: Security FAIL — giao Kid fix {', '.join(b.id for b in open_bugs)} (round {n}).",
+            )
+            return "wait"
+        tag = f"resec-{_fix_rounds(parent) + 1}"
+        if tag not in (sec.tags or []):
+            tags = list(sec.tags or [])
+            tags.append(tag)
+            store.update_task_fields(sec.id, tags=tags)
+            store.set_status(sec.id, "in_progress", "conan")
+            store.set_status(sec.id, "backlog", "conan")
+            store.add_event(
+                sec.id, "conan", "system",
+                f"Security FAIL nhưng chưa có bug mở — Akai phải create_bug_ticket rồi FAIL lại.\n{sec_text[:2000]}",
+            )
+            store.add_chat("conan", f"{parent.id}: Security FAIL — trả Akai tạo bug ticket.")
+            return "wait"
+        store.set_status(parent.id, "blocked", "conan")
+        store.add_chat("conan", f"{parent.id}: Security FAIL kéo dài — dừng, cần bạn xem board.")
+        return "wait"
+
+    if sec_verdict != "PASS":
+        return "wait"
+
+    pentest_tasks = [t for t in store.list_tasks(parent_id=parent.id) if t.assignee == "amuro"]
+    if not pentest_tasks:
+        pen = store.create_task(
+            title=f"Penetration Test — {parent.title}",
+            description=(
+                f"Pentest preview URL của {parent.id}.\n"
+                f"Preview URL: {preview_url}\n"
+                "CHỈ tấn công URL preview/staging được cấp. Không sửa source.\n"
+                "Kết thúc bằng post_message '## Penetration Test — PASS' hoặc "
+                "'## Penetration Test — FAIL' (+ create_bug_ticket)."
+            ),
+            assignee="amuro",
+            project=parent.project,
+            project_dir=parent.project_dir,
+            parent_id=parent.id,
+            created_by="conan",
+            tags=["penetration-test"],
+        )
+        _ensure_parent_testing(parent)
+        store.add_chat(
+            "conan",
+            f"{parent.id}: Security PASS — giao Amuro Pentest ({pen.id}) trước Final Review.",
+        )
+        return "wait"
+
+    pen = pentest_tasks[-1]
+    if pen.status in ("backlog", "in_progress", "blocked"):
+        return "wait"
+
+    pen_verdict, pen_text = _critic_verdict(pen.id, "amuro", "PENETRATION TEST")
+    if pen_verdict == "UNKNOWN" and "pen-retry" not in (pen.tags or []):
+        tags = list(pen.tags or [])
+        tags.append("pen-retry")
+        store.update_task_fields(pen.id, tags=tags)
+        store.set_status(pen.id, "in_progress", "conan")
+        store.set_status(pen.id, "backlog", "conan")
+        store.add_event(pen.id, "conan", "system", "Báo cáo Pentest chưa có PASS/FAIL rõ — Amuro chạy lại.")
+        store.add_chat("conan", f"{parent.id}: Amuro chưa có verdict rõ — requeue Pentest.")
+        return "wait"
+
+    if pen_verdict == "FAIL":
+        open_bugs = _open_related_bugs(parent)
+        if open_bugs:
+            n = _assign_bugs_to_kid(parent, open_bugs)
+            if n < 0:
+                store.set_status(parent.id, "blocked", "conan")
+                store.add_chat(
+                    "conan",
+                    f"{parent.id}: Pentest FAIL + còn bug sau {MAX_FIX_ROUNDS} round — cần bạn xem board.",
+                )
+                return "wait"
+            store.add_chat(
+                "conan",
+                f"{parent.id}: Pentest FAIL — giao Kid fix {', '.join(b.id for b in open_bugs)} (round {n}).",
+            )
+            return "wait"
+        tag = f"repen-{_fix_rounds(parent) + 1}"
+        if tag not in (pen.tags or []):
+            tags = list(pen.tags or [])
+            tags.append(tag)
+            store.update_task_fields(pen.id, tags=tags)
+            store.set_status(pen.id, "in_progress", "conan")
+            store.set_status(pen.id, "backlog", "conan")
+            store.add_event(
+                pen.id, "conan", "system",
+                f"Pentest FAIL nhưng chưa có bug mở — Amuro phải create_bug_ticket rồi FAIL lại.\n{pen_text[:2000]}",
+            )
+            store.add_chat("conan", f"{parent.id}: Pentest FAIL — trả Amuro tạo bug ticket.")
+            return "wait"
+        store.set_status(parent.id, "blocked", "conan")
+        store.add_chat("conan", f"{parent.id}: Pentest FAIL kéo dài — dừng, cần bạn xem board.")
+        return "wait"
+
+    if pen_verdict != "PASS":
+        return "wait"
+
+    return "proceed"
+
+
+def _parse_conan_verdict(result: str) -> bool:
     """True nếu Final Review APPROVED. Ưu tiên dòng VERDICT:; REJECTED thắng nếu cùng có."""
     up = (result or "").upper()
     for line in up.splitlines()[:20]:
@@ -560,8 +775,8 @@ def _has_bug_tickets(parent: Task) -> bool:
     return bool(store.list_tasks(parent_id=parent.id, type="bug"))
 
 
-def _assign_bugs_to_stark(parent: Task, bugs: list[Task]) -> int:
-    """Giao bug cho Stark/Kid xử lý."""
+def _assign_bugs_to_kid(parent: Task, bugs: list[Task]) -> int:
+    """Giao bug cho Kid xử lý."""
     rounds = _fix_rounds(parent)
     if rounds >= MAX_FIX_ROUNDS:
         return -1
@@ -629,8 +844,12 @@ async def check_parent_progress(parent_id: str) -> None:
         (t.type == "bug" and t.status in ("backlog", "in_progress"))
         for t in subtasks
     )
-    # Heiji đang QA test hoặc subtask ở bước testing -> cột In Testing / QA
-    has_testing = any(t.status == "testing" or (t.status == "in_progress" and t.assignee == "heiji") for t in subtasks)
+    # Heiji/Akai/Amuro đang critic hoặc subtask ở bước testing -> cột In Testing / QA
+    critic_agents = ("heiji", "akai", "amuro", "haibara")
+    has_testing = any(
+        t.status == "testing" or (t.status == "in_progress" and t.assignee in critic_agents)
+        for t in subtasks
+    )
     has_blocked = any(t.status == "blocked" for t in subtasks)
 
     if parent.status not in ("blocked", "failed"):
@@ -669,7 +888,7 @@ async def check_parent_progress(parent_id: str) -> None:
     # Fix round: bug do QA tạo → giao Kid (Conan không tạo bug)
     open_bugs = _open_related_bugs(parent)
     if open_bugs:
-        n = _assign_bugs_to_stark(parent, open_bugs)
+        n = _assign_bugs_to_kid(parent, open_bugs)
         if n < 0:
             store.set_status(parent_id, "blocked", "conan")
             store.add_chat(
@@ -679,10 +898,10 @@ async def check_parent_progress(parent_id: str) -> None:
             )
             return
         store.add_chat(
-            "jarvis",
+            "conan",
             f"QA đã tạo {len(open_bugs)} bug ở {parent.id} — fix round {n}: "
             + ", ".join(b.id for b in open_bugs)
-            + " → Stark fix, rồi Hawkeye QA lại (chưa tới Jarvis).",
+            + " → Kid fix, rồi Heiji QA lại (chưa tới Conan).",
         )
         return
 
@@ -690,7 +909,7 @@ async def check_parent_progress(parent_id: str) -> None:
 
 
 async def _closure(parent: Task, subtasks: list[Task]) -> None:
-    """Phase 5: chỉ khi QA PASS → Haibara → Conan Final Review. QA FAIL → bug/Kid, không qua Conan."""
+    """Phase 5: QA PASS → Haibara → Akai → Amuro → Conan Final Review. FAIL → bug/Kid."""
     verdict, qa_text = _qa_verdict(parent.id)
 
     qa_tasks = [t for t in subtasks if t.assignee == "heiji"]
@@ -710,7 +929,7 @@ async def _closure(parent: Task, subtasks: list[Task]) -> None:
     if verdict == "FAIL":
         open_bugs = _open_related_bugs(parent)
         if open_bugs:
-            n = _assign_bugs_to_stark(parent, open_bugs)
+            n = _assign_bugs_to_kid(parent, open_bugs)
             if n < 0:
                 store.set_status(parent.id, "blocked", "conan")
                 store.add_chat(
@@ -762,33 +981,40 @@ async def _closure(parent: Task, subtasks: list[Task]) -> None:
             store.update_task_fields(parent.id, tags=[*parent.tags, tag])
         return
 
-    # Haibara tổng hợp (QA đã PASS)
-    try:
-        haibara = AGENTS["haibara"]
-        deliverables = _collect_deliverables(subtasks)
-        haibara_res = await run_agent(
-            "haibara",
-            haibara.system_prompt(),
-            f"Task cha {parent.id}: {parent.title}\n\nDeliverable các subtask:\n{deliverables}\n\n"
-            f"QA verdict: PASS\n{qa_text[:2000]}\n\n"
-            "Hãy post_message lên task hiện tại báo cáo QA Complete:\n"
-            "- Tiêu đề: '## QA Complete — PASS'\n"
-            "- Tóm tắt: deliverable build, Live URL, screenshot links từ Heiji, CSS checks.\n"
-            "- Khuyến nghị: sẵn sàng Conan Final Review.\n"
-            "Rồi trả lời text ngắn.",
-            parent,
-            haibara.tools,
-            max_iterations=6,
-        )
-        if haibara_res and not haibara_res.startswith("[Tiến trình"):
-            events = store.list_events(parent.id)
-            has_haibara_comment = any(e.agent == "haibara" and e.kind == "comment" for e in events)
-            if not has_haibara_comment:
-                store.add_event(parent.id, "haibara", "comment", haibara_res)
-    except Exception:
-        log.exception("Haibara summary failed (non-blocking)")
+    # Haibara tổng hợp (QA đã PASS) — chỉ chạy một lần
+    events = store.list_events(parent.id)
+    has_haibara_comment = any(e.agent == "haibara" and e.kind == "comment" for e in events)
+    if not has_haibara_comment:
+        try:
+            haibara = AGENTS["haibara"]
+            deliverables = _collect_deliverables(subtasks)
+            haibara_res = await run_agent(
+                "haibara",
+                haibara.system_prompt(),
+                f"Task cha {parent.id}: {parent.title}\n\nDeliverable các subtask:\n{deliverables}\n\n"
+                f"QA verdict: PASS\n{qa_text[:2000]}\n\n"
+                "Hãy post_message lên task hiện tại báo cáo QA Complete:\n"
+                "- Tiêu đề: '## QA Complete — PASS'\n"
+                "- Tóm tắt: deliverable build, Live URL, screenshot links từ Heiji, CSS checks.\n"
+                "- Khuyến nghị: sẵn sàng Security (Akai) → Pentest (Amuro) → Conan Final Review.\n"
+                "Rồi trả lời text ngắn.",
+                parent,
+                haibara.tools,
+                max_iterations=6,
+            )
+            if haibara_res and not haibara_res.startswith("[Tiến trình"):
+                events = store.list_events(parent.id)
+                has_haibara_comment = any(e.agent == "haibara" and e.kind == "comment" for e in events)
+                if not has_haibara_comment:
+                    store.add_event(parent.id, "haibara", "comment", haibara_res)
+        except Exception:
+            log.exception("Haibara summary failed (non-blocking)")
 
-    # Conan Final Review (chỉ sau QA PASS)
+    # Akai Security → Amuro Pentest (tuần tự) trước Conan Final Review
+    if _gate_security_pentest(parent, subtasks) != "proceed":
+        return
+
+    # Conan Final Review (chỉ sau QA PASS + Security PASS + Pentest PASS)
     conan = AGENTS["conan"]
     preview_url = f"{config.BASE_URL}/preview/{parent.project}/"
     try:
@@ -817,7 +1043,7 @@ async def _closure(parent: Task, subtasks: list[Task]) -> None:
         store.add_chat("conan", f"Không thể verify {parent.id} do lỗi: {e}. Task chuyển sang blocked.")
         return
 
-    approved = _parse_jarvis_verdict(result)
+    approved = _parse_conan_verdict(result)
     store.add_event(parent.id, "conan", "comment", f"Final Review\n\n{result[:6000]}")
 
     if not approved:
@@ -889,6 +1115,9 @@ async def _closure(parent: Task, subtasks: list[Task]) -> None:
         if b.status == "testing":
             store.set_status(b.id, "done", "conan")
 
+    # Tự động dọn dẹp các file .bak, .tmp, test script tạm tạo trong quá trình agent làm việc
+    _cleanup_temp_bak_files(parent)
+
     if parent.review_type == "operator":
         store.set_status(parent.id, "testing", "conan")
         store.set_status(parent.id, "review", "conan")
@@ -908,14 +1137,44 @@ async def _closure(parent: Task, subtasks: list[Task]) -> None:
 
     await _phase6_memorize(parent, result)
 
+def _cleanup_temp_bak_files(parent: Task) -> None:
+    """Tự động dọn dẹp các file rác .bak, .tmp, test-script tạm tạo trong quá trình agent debug/fix bug."""
+    import os
+    from pathlib import Path
+    from ..paths import is_plausible_fs_path
 
-def _collect_deliverables(subtasks: list[Task]) -> str:
-    parts = []
-    for t in subtasks:
-        comments = [e for e in store.list_events(t.id) if e.kind == "comment"]
-        last = comments[-1].message[:800] if comments else "(không có deliverable message)"
-        parts.append(f"[{t.id}] {t.title} ({t.assignee}, {t.status}):\n{last}")
-    return "\n\n".join(parts)
+    dirs_to_clean = []
+    if parent.project_dir and is_plausible_fs_path(parent.project_dir):
+        dirs_to_clean.append(Path(parent.project_dir))
+
+    # Dọn dẹp cả trong thư mục Orchestrator routes nếu có patch/bak tạm
+    orch_routes = config.WORKSPACE_DIR / "orchestrator" / "routes"
+    if orch_routes.exists():
+        dirs_to_clean.append(orch_routes)
+
+    for pdir in dirs_to_clean:
+        if not pdir.is_dir():
+            continue
+        try:
+            for file_path in pdir.rglob("*"):
+                if not file_path.is_file():
+                    continue
+                name = file_path.name.lower()
+                # Tự động dọn file .bak*, *.tmp, patch_*, verify_*
+                if (
+                    ".bak" in name
+                    or name.endswith(".tmp")
+                    or (name.startswith("patch_") and name.endswith(".py"))
+                    or (name.startswith("verify_") and name.endswith(".py"))
+                    or "diag.py" in name
+                ):
+                    try:
+                        file_path.unlink(missing_ok=True)
+                        log.info("Auto-cleaned temp backup file: %s", file_path)
+                    except Exception as e:
+                        log.warning("Could not auto-clean file %s: %s", file_path, e)
+        except Exception as e:
+            log.warning("Error scanning for cleanup in %s: %s", pdir, e)
 
 
 async def _phase6_memorize(parent: Task, summary: str) -> None:

@@ -146,9 +146,10 @@ export function subtasksFor(t) {
 
   const renderRows = (list, kind) => list.map((sub, i) => {
     let agentName = sub.assignee || "kid";
-    if (sub.status === "testing" && agentName !== "heiji") {
+    const explicitCritics = ["akai", "amuro", "haibara", "heiji", "conan"];
+    if (sub.status === "testing" && !explicitCritics.includes(agentName.toLowerCase())) {
       agentName = "heiji";
-    } else if (sub.status === "review" && agentName !== "conan" && agentName !== "haibara") {
+    } else if (sub.status === "review" && !explicitCritics.includes(agentName.toLowerCase())) {
       agentName = "haibara";
     }
     const info = AGENT_INFO[agentName.toLowerCase()] || { icon: "🤖" };
@@ -202,6 +203,7 @@ export function renderCard(t, isLatestDone = false) {
   card.onclick = () => openModal(t.id);
   const meta = parseMeta(t);
   const pill = pillFor(t, meta);
+  const children = childrenOf(t.id);
   const path = meta.branch || (t.project_dir
     ? t.project_dir.replace(/^.*[\\/]projects[\\/]/, "demo/")
     : `demo/${t.project}`);
@@ -215,7 +217,7 @@ export function renderCard(t, isLatestDone = false) {
       <span class="pill ${pill.cls}"><span class="pill-dot"></span>${pill.text}</span>
       <div class="task-card-head-right">
         ${timeBadge}
-        ${cardTag(t)}
+        ${cardTag(t, children)}
         ${blockBtn}
       </div>
     </div>

@@ -52,10 +52,24 @@ bất kỳ), `HOST`, `PORT`.
 
 ## Kiểm thử
 
+Offline (không cần API key) — chạy trước khi coi luồng ổn:
+
 ```powershell
-python scripts/test_board.py     # store + transition guard
-python scripts/test_llm.py       # endpoint LLM + tool calling
-python scripts/test_runtime.py   # agent thật ghi file thật
+python scripts/test_board.py
+python scripts/test_json_repair.py
+python scripts/test_link_registry.py
+python scripts/test_git.py
+python scripts/test_agent_consistency.py
+python scripts/test_prompt_tool_consistency.py
+python scripts/test_security_pipeline.py
+python scripts/test_heiji_checklist_coverage.py
+```
+
+Có API key — smoke LLM + agent tool loop:
+
+```powershell
+python scripts/test_llm.py
+python scripts/test_runtime.py
 ```
 
 ## Cấu trúc

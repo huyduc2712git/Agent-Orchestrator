@@ -16,6 +16,8 @@ export const AGENT_INFO = {
   agasa: { name: "Agasa", role: "Backend Specialist", icon: "🧪", bg: "#211633", fg: "#a78bfa", border: "#392557" },
   heiji: { name: "Heiji", role: "Visual QA / Hiện trường", icon: "🔍", bg: "#12241a", fg: "#4ade80", border: "#1f402c" },
   haibara: { name: "Ai Haibara", role: "Quality Reviewer", icon: "💊", bg: "#2d1624", fg: "#f472b6", border: "#4a243b" },
+  akai: { name: "Shuichi Akai", role: "Security Reviewer", icon: "🔫", bg: "#1a1f2e", fg: "#93c5fd", border: "#2c3b59" },
+  amuro: { name: "Amuro", role: "Penetration Tester", icon: "🕵️", bg: "#1f1a14", fg: "#fbbf24", border: "#423018" },
   operator: { name: "Operator", role: "Human Reviewer", icon: "👤", bg: "#1f1f23", fg: "#a1a1aa", border: "#333338" },
   system: { name: "System", role: "System Event", icon: "⚙️", bg: "#261c10", fg: "#fbbf24", border: "#423019" },
 };
@@ -27,6 +29,8 @@ export const AGENT_STYLE = {
   agasa: AGENT_INFO.agasa,
   heiji: AGENT_INFO.heiji,
   haibara: AGENT_INFO.haibara,
+  akai: AGENT_INFO.akai,
+  amuro: AGENT_INFO.amuro,
   system: AGENT_INFO.system,
   operator: AGENT_INFO.operator,
 };
@@ -44,6 +48,8 @@ export const AGENT_LABEL = {
   kid: "Kaito Kid",
   agasa: "Agasa",
   heiji: "Heiji",
+  akai: "Shuichi Akai",
+  amuro: "Amuro",
   system: "System",
   operator: "Operator",
 };

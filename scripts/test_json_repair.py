@@ -9,7 +9,7 @@ if hasattr(sys.stdout, "reconfigure"):
 from orchestrator import llm  # noqa: E402
 
 CASES = {
-    "cut giữa key": '{"action": "plan", "task": {"title": "A"}, "subtasks": [{"title": "x", "agent": "stark"}, {"title":',
+    "cut giữa key": '{"action": "plan", "task": {"title": "A"}, "subtasks": [{"title": "x", "agent": "kid"}, {"title":',
     "cut giữa string": '{"action": "plan", "reply": "Da hieu yeu ca',
     "cut sau dau phay": '{"action": "plan", "subtasks": [{"title": "x"},',
     "cut trong nested": '{"action": "plan", "task": {"title": "A", "description": "B"',

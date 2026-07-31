@@ -818,12 +818,14 @@ body.sidebar-collapsed .sidebar-settings {
   display: flex; align-items: center; justify-content: center;
   font-weight: 700; font-size: 1.15rem; flex-shrink: 0;
 }
-.avatar-jarvis, .avatar-conan { background: #1a2233; color: #60a5fa; border: 1px solid #2c3b59; }
+.avatar-conan { background: #1a2233; color: #60a5fa; border: 1px solid #2c3b59; }
 .avatar-coulson { background: #1c212c; color: #94a3b8; border: 1px solid #2d3545; }
-.avatar-stark, .avatar-kid { background: #2a1b14; color: #fb923c; border: 1px solid #472b1d; }
-.avatar-banner, .avatar-agasa { background: #211633; color: #a78bfa; border: 1px solid #392557; }
-.avatar-hawkeye, .avatar-heiji { background: #12241a; color: #4ade80; border: 1px solid #1f402c; }
-.avatar-pepper, .avatar-haibara { background: #2d1624; color: #f472b6; border: 1px solid #4a243b; }
+.avatar-kid { background: #2a1b14; color: #fb923c; border: 1px solid #472b1d; }
+.avatar-agasa { background: #211633; color: #a78bfa; border: 1px solid #392557; }
+.avatar-heiji { background: #12241a; color: #4ade80; border: 1px solid #1f402c; }
+.avatar-haibara { background: #2d1624; color: #f472b6; border: 1px solid #4a243b; }
+.avatar-akai { background: #1a1f2e; color: #93c5fd; border: 1px solid #2c3b59; }
+.avatar-amuro { background: #1f1a14; color: #fbbf24; border: 1px solid #423018; }
 .avatar-operator { background: #1f1f23; color: #a1a1aa; border: 1px solid #333338; }
 .avatar-system { background: #2a2115; color: #fbbf24; border: 1px solid #423018; }
 .avatar-user { background: #1f1f23; color: #a1a1aa; border: 1px solid #333338; }
@@ -837,19 +839,19 @@ body.sidebar-collapsed .sidebar-settings {
   min-height: 0;
 }
 .msg-row { display: flex; gap: 12px; align-items: flex-start; width: 100%; }
-.msg-row.jarvis, .msg-row.system-msg { width: 100%; max-width: 100%; }
+.msg-row.conan, .msg-row.system-msg { width: 100%; max-width: 100%; }
 .msg-row.user { align-self: flex-end; flex-direction: row; justify-content: flex-end; max-width: 80%; }
 
-.msg-jarvis-wrapper { display: flex; flex-direction: column; gap: 8px; flex: 1; min-width: 0; width: 100%; }
+.msg-conan-wrapper { display: flex; flex-direction: column; gap: 8px; flex: 1; min-width: 0; width: 100%; }
 .msg-user-wrapper { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; max-width: 100%; }
 
-.msg-meta-jarvis {
+.msg-meta-conan {
   display: flex; align-items: center; gap: 8px;
   font-size: 0.78rem; color: #94a3b8;
 }
-.msg-meta-jarvis .name { font-weight: 600; color: #f8fafc; }
-.msg-meta-jarvis .dot { color: #475569; }
-.msg-meta-jarvis .time { color: #64748b; font-size: 0.74rem; }
+.msg-meta-conan .name { font-weight: 600; color: #f8fafc; }
+.msg-meta-conan .dot { color: #475569; }
+.msg-meta-conan .time { color: #64748b; font-size: 0.74rem; }
 
 .msg-meta-user {
   display: flex; align-items: center; gap: 8px;
@@ -885,7 +887,7 @@ body.sidebar-collapsed .sidebar-settings {
   text-align: left;
   box-sizing: border-box;
 }
-.msg-bubble.jarvis-bubble {
+.msg-bubble.conan-bubble {
   width: fit-content;
   max-width: 100%;
   background: #111320;
