@@ -303,8 +303,13 @@ async def scheduler_loop() -> None:
             if t.parent_id  # Chỉ reset subtask
         ]
         for ot in orphaned:
-            log.info("Resetting orphaned in_progress subtask %s -> backlog for auto-resumption", ot.id)
-            store.set_status(ot.id, "backlog", "system")
+            parent = store.get_task(ot.parent_id)
+            if parent and parent.status in ("done", "archived", "failed"):
+                log.info("Parent task %s is %s — marking orphaned subtask %s -> done", ot.parent_id, parent.status, ot.id)
+                store.set_status(ot.id, "done", "system")
+            else:
+                log.info("Resetting orphaned in_progress subtask %s -> backlog for auto-resumption", ot.id)
+                store.set_status(ot.id, "backlog", "system")
     except Exception:
         log.exception("Failed to reset orphaned in_progress tasks")
 
@@ -325,6 +330,12 @@ async def scheduler_loop() -> None:
             for t in candidates:
                 if t.assignee not in WORKER_KEYS or t.id in _in_flight:
                     continue
+                if t.parent_id:
+                    parent = store.get_task(t.parent_id)
+                    if parent and parent.status in ("done", "archived", "failed"):
+                        if parent.status == "done":
+                            store.set_status(t.id, "done", "system")
+                        continue
                 if not store.deps_satisfied(t.id):
                     continue
                 _in_flight.add(t.id)

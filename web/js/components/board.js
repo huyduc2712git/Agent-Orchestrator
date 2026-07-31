@@ -1,6 +1,6 @@
 /* Agent Orchestrator — Kanban Board Component */
 
-import { COLUMNS, AGENT_INFO } from "../constants.js";
+import { COLUMNS, AGENT_INFO, getAgentIconHtml } from "../constants.js";
 import { state, $, escapeHtml, taskElapsed, parseMeta, pillFor, cardTag } from "../state.js";
 import { renderSidebar, updateFooterProject } from "./sidebar.js";
 import { openModal } from "./modal.js";
@@ -152,7 +152,7 @@ export function subtasksFor(t) {
     } else if (sub.status === "review" && !explicitCritics.includes(agentName.toLowerCase())) {
       agentName = "haibara";
     }
-    const info = AGENT_INFO[agentName.toLowerCase()] || { icon: "🤖" };
+    const iconHtml = getAgentIconHtml(agentName.toLowerCase());
     const { statusText, subCls } = childStatusMeta(sub.status);
     const step = sub.id || (kind === "bug" ? `bug-${i + 1}` : `#${i + 1}`);
 
@@ -161,7 +161,7 @@ export function subtasksFor(t) {
         <span class="subtask-dot"></span>
         <span class="subtask-step">${escapeHtml(step)}</span>
         <span class="subtask-title" title="${escapeHtml(sub.title)}">${escapeHtml(sub.title)}</span>
-        <span class="subtask-agent-tag"><span class="subtask-agent-icon">${info.icon}</span> ${escapeHtml(agentName)}</span>
+        <span class="subtask-agent-tag"><span class="subtask-agent-icon">${iconHtml}</span> ${escapeHtml(agentName)}</span>
         <span class="subtask-badge ${subCls}">${statusText}</span>
       </div>`;
   }).join("");

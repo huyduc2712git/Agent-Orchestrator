@@ -1,6 +1,6 @@
 /* Agent Orchestrator — Modals & Dialogs Component */
 
-import { STATUS_LABEL, AGENT_INFO } from "../constants.js";
+import { STATUS_LABEL, AGENT_INFO, getAgentIconHtml } from "../constants.js";
 import { state, $, escapeHtml, taskElapsed, parseMeta, getLatestDoneTaskId, resolveAssignee } from "../state.js";
 import { blockTask } from "../api.js";
 import { childStatusMeta, getProgressStyle } from "./board.js";
@@ -134,6 +134,9 @@ function formatEventMessage(msg) {
 function agentEventIcon(agentName, kind) {
   const ag = (agentName || "system").toLowerCase();
   const info = AGENT_INFO[ag] || { icon: "🤖", bg: "#1a2233", fg: "#60a5fa", border: "#2c3b59" };
+  if (info.avatar) {
+    return `<span class="event-icon avatar-img-wrap" style="background:${info.bg};border:1px solid ${info.border}"><img src="${info.avatar}" class="event-avatar-img" alt="${escapeHtml(ag)}"/></span>`;
+  }
   return `<span class="event-icon" style="background:${info.bg};color:${info.fg};border:1px solid ${info.border}">${info.icon}</span>`;
 }
 
@@ -263,12 +266,12 @@ export async function openModal(taskId) {
   apiSubs.forEach((c) => state.tasks.set(c.id, c));
 
   const createdBy = t.created_by || "conan";
-  const createdInfo = AGENT_INFO[createdBy.toLowerCase()] || { icon: "🤖" };
-  const createdHtml = `${createdInfo.icon} <b>${escapeHtml(createdBy)}</b>`;
+  const createdIconHtml = getAgentIconHtml(createdBy.toLowerCase());
+  const createdHtml = `${createdIconHtml} <b>${escapeHtml(createdBy)}</b>`;
 
   const workerName = resolveAssignee(t, apiSubs);
-  const workerInfo = AGENT_INFO[workerName.toLowerCase()] || { icon: "💻" };
-  const workerHtml = `${workerInfo.icon} <b>${escapeHtml(workerName)}</b>`;
+  const workerIconHtml = getAgentIconHtml(workerName.toLowerCase());
+  const workerHtml = `${workerIconHtml} <b>${escapeHtml(workerName)}</b>`;
 
   $("modal-meta").innerHTML = [
     elapsed ? `Thời gian: <b>${elapsed}</b>` : null,
@@ -407,7 +410,7 @@ export async function openModal(taskId) {
       } else if (sub.status === "review" && agentName !== "conan" && agentName !== "haibara") {
         agentName = "haibara";
       }
-      const info = AGENT_INFO[agentName.toLowerCase()] || { icon: "🤖" };
+      const iconHtml = getAgentIconHtml(agentName.toLowerCase());
       const { statusText, subCls } = childStatusMeta(sub.status);
       const label = sub.id ? sub.id : (kind === "bug" ? `Bug #${i + 1}` : `Subtask #${i + 1}`);
       return `
@@ -416,7 +419,7 @@ export async function openModal(taskId) {
             <span class="subtask-id">${label}</span>
             <div class="subtask-item-title">${escapeHtml(sub.title)}</div>
           </div>
-          <span class="subtask-agent"><span class="subtask-agent-icon">${info.icon}</span> <b>${escapeHtml(agentName)}</b></span>
+          <span class="subtask-agent"><span class="subtask-agent-icon">${iconHtml}</span> <b>${escapeHtml(agentName)}</b></span>
           <span class="subtask-badge ${subCls}">${statusText}</span>
         </div>`;
     }).join("");

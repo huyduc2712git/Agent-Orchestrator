@@ -1,4 +1,4 @@
-import { AGENT_INFO } from "./constants.js";
+import { AGENT_INFO, getAgentIconHtml } from "./constants.js";
 
 export const state = {
   tasks: new Map(),
@@ -178,8 +178,8 @@ export function cardTag(t, subtasks = []) {
   if (!t) return "";
   const assigneeName = resolveAssignee(t, subtasks);
   const agent = assigneeName.toLowerCase();
-  const info = AGENT_INFO[agent] || { icon: "🤖" };
-  let html = `<span class="card-agent-tag" title="${escapeHtml(assigneeName)}">${info.icon} ${escapeHtml(assigneeName)}</span>`;
+  const iconHtml = getAgentIconHtml(agent);
+  let html = `<span class="card-agent-tag" title="${escapeHtml(assigneeName)}">${iconHtml} ${escapeHtml(assigneeName)}</span>`;
   if (t.type === "bug") {
     const sev = t.severity ? ` · ${t.severity}` : "";
     html += `<span class="card-tag tag-bug" title="Bug${sev}">🐛 Bug${escapeHtml(sev)}</span>`;

@@ -1,6 +1,7 @@
 /* Agent Orchestrator — Chat Component & SSE Stream */
 
 import { state, $, escapeHtml, formatTime } from "../state.js";
+import { getAgentAvatarHtml } from "../constants.js";
 import { openNewProject } from "./modal.js";
 
 export function formatMarkdownMessage(text) {
@@ -138,7 +139,7 @@ export function renderChatMessage(m, index) {
     const row = document.createElement("div");
     row.className = "msg-row system-msg";
     row.innerHTML = `
-      <span class="avatar avatar-system">⚙️</span>
+      ${getAgentAvatarHtml("system")}
       <div class="msg-conan-wrapper">
         <div class="msg-meta-conan">
           <span class="name" style="color: #eab308;">System / Board Patrol</span>
@@ -169,11 +170,11 @@ export function renderChatMessage(m, index) {
         </div>
         <div class="msg-bubble user-bubble">${formatMarkdownMessage(m.message)}</div>
       </div>
-      <span class="avatar avatar-user">👤</span>`;
+      ${getAgentAvatarHtml("user")}`;
   } else {
     const work = conanWorkStats(state.chatMessages, index);
     row.innerHTML = `
-      <span class="avatar avatar-conan">🕵️‍♂️</span>
+      ${getAgentAvatarHtml("conan")}
       <div class="msg-conan-wrapper">
         <div class="msg-meta-conan">
           <span class="name">Conan</span>
@@ -203,7 +204,7 @@ export function setThinking(on) {
       thinkRow.id = "thinking-row";
       thinkRow.className = "msg-row conan thinking";
       thinkRow.innerHTML = `
-        <span class="avatar avatar-conan">🕵️‍♂️</span>
+        ${getAgentAvatarHtml("conan")}
         <div class="msg-bubble thinking-bubble">
           <span class="thinking-text">Conan đang suy nghĩ...</span>
           <span class="typing-dots">
@@ -230,7 +231,7 @@ export async function loadChat() {
   if (!state.chatMessages.length) {
     const w = document.createElement("div");
     w.className = "msg-row conan";
-    w.innerHTML = `<span class="avatar avatar-conan">🕵️‍♂️</span><div><div class="msg-bubble">Ask me something!</div></div>`;
+    w.innerHTML = `${getAgentAvatarHtml("conan")}<div><div class="msg-bubble">Ask me something!</div></div>`;
     box.appendChild(w);
   } else {
     state.chatMessages.forEach((m, i) => renderChatMessage(m, i));

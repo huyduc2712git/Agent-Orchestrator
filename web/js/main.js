@@ -6,12 +6,14 @@ import { renderBoard } from "./components/board.js";
 import { renderSidebar, switchView, goChat, notifyTab } from "./components/sidebar.js";
 import { openModal, openNewProject, renderEvent } from "./components/modal.js";
 import { loadChat, sendChatMessage, resizeChatInput, resetChatInputHeight, appendChatMessage, renderChatMessage, setThinking } from "./components/chat.js";
+import { initSettingsEvents, openSettingsModal } from "./components/settings.js";
 
 // Make key functions available globally for inline HTML events
 window.blockTask = blockTask;
 window.selectProject = selectProject;
 window.switchView = switchView;
 window.openModal = openModal;
+window.openSettingsModal = openSettingsModal;
 
 function connectWS() {
   const protocol = location.protocol === "https:" ? "wss:" : "ws:";
@@ -61,6 +63,7 @@ function startDurationTicker() {
 }
 
 function initEvents() {
+  initSettingsEvents();
   // Navigation
   document.querySelectorAll(".nav-item").forEach((btn) => {
     btn.addEventListener("click", () => switchView(btn.dataset.view));
