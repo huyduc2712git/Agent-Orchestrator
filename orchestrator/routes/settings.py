@@ -155,7 +155,7 @@ class LlmToggleIn(BaseModel):
     enabled: bool
 
 
-@router.patch("/api/settings/llm-tools/{tool_id}")
+@router.patch("/api/settings/llm-tools/{tool_id:path}")
 async def toggle_llm_tool(tool_id: str, body: LlmToggleIn):
     try:
         tool = settings.set_llm_tool_enabled(tool_id, body.enabled)
@@ -170,7 +170,7 @@ async def toggle_llm_tool(tool_id: str, body: LlmToggleIn):
     }
 
 
-@router.delete("/api/settings/llm-tools/{tool_id}")
+@router.delete("/api/settings/llm-tools/{tool_id:path}")
 async def delete_llm_tool(tool_id: str):
     try:
         ok = settings.delete_llm_tool(tool_id)

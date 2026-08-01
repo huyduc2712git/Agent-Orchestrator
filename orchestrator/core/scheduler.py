@@ -138,7 +138,14 @@ async def _run_worker(task: Task) -> None:
                 log.info("Worker %s kết thúc sớm cho %s vì status đã chuyển sang %s", task.assignee, task.id, curr.status)
                 return
             store.add_event(task.id, task.assignee, "comment", result[:4000])
-            store.set_status(task.id, "testing", task.assignee)
+            
+            res_lower = result.lower()
+            if "chạm giới hạn vòng lặp" in res_lower or "chưa hoàn tất" in res_lower or "chưa xong" in res_lower:
+                log.warning("Worker %s chưa hoàn tất %s do chạm max iterations — requeuing to backlog", task.assignee, task.id)
+                store.set_status(task.id, "backlog", task.assignee)
+                store.add_event(task.id, "system", "system", "Chạm giới hạn vòng lặp tool — tự động đưa về backlog để Agent chạy tiếp lượt sau.")
+            else:
+                store.set_status(task.id, "testing", task.assignee)
         except Exception as e:
             log.exception("Worker %s failed on %s", task.assignee, task.id)
             err_str = str(e)

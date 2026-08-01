@@ -39,12 +39,44 @@ export function customConfirm(title, message, okText = "Đồng ý", okBg = "") 
   });
 }
 
+export function setProjectCreateMode(mode) {
+  const isGit = mode === "git";
+  document.querySelectorAll(".project-mode-tab").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.mode === (isGit ? "git" : "folder"));
+  });
+  $("project-fields-folder")?.classList.toggle("hidden", isGit);
+  $("project-fields-git")?.classList.toggle("hidden", !isGit);
+  const name = $("project-name");
+  const gitUrl = $("project-git-url");
+  if (name) name.required = !isGit;
+  if (gitUrl) gitUrl.required = isGit;
+  const addBtn = $("project-add");
+  if (addBtn) addBtn.textContent = isGit ? "Clone & tạo" : "Tạo project";
+  const hint = $("project-hint");
+  if (hint && !hint.dataset.locked) {
+    hint.textContent = isGit
+      ? "Clone GitHub/GitLab vào Projects root (hoặc path bạn chỉ định), rồi gắn làm project."
+      : "Tạo thư mục project mới — task từ Chat sẽ gắn vào project đang chọn.";
+  }
+}
+
 export function openNewProject(hint) {
   $("project-backdrop")?.classList.remove("hidden");
+  setProjectCreateMode("folder");
   const msg = $("project-msg");
   if (msg) {
     msg.textContent = hint || "";
     msg.className = "settings-msg " + (hint ? "ok" : "");
+  }
+  const hintEl = $("project-hint");
+  if (hintEl) {
+    if (hint) {
+      hintEl.dataset.locked = "1";
+      hintEl.textContent = hint;
+    } else {
+      delete hintEl.dataset.locked;
+      setProjectCreateMode("folder");
+    }
   }
   $("project-name")?.focus();
 }
@@ -441,7 +473,7 @@ export async function openModal(taskId) {
       if (bugs.length) {
         const open = bugs.filter((c) => c.status !== "done" && c.status !== "archived").length;
         body += `
-          <div class="panel-title" style="margin-top: 16px;">Bugs (${open} mở / ${bugs.length})</div>
+          <div class="panel-title" style="margin-top: 16px;">Bugs (${open} / ${bugs.length})</div>
           <div class="modal-subtasks-list">${rowHtml(bugs, "bug")}</div>`;
       }
       subtasksEl.innerHTML = body;

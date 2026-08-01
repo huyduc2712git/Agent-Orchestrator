@@ -160,5 +160,5 @@ if __name__ == "__main__":
         "orchestrator.main:app",
         host=config.HOST,
         port=config.PORT,
-        reload=False,
+        reload=True,
     )

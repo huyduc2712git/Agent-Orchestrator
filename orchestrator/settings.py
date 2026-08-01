@@ -412,44 +412,61 @@ def add_llm_tool(name: str, base_url: str, model: str, api_key: str, tool_id: st
 
 
 def set_llm_tool_enabled(tool_id: str, enabled: bool) -> dict | None:
-    """Bật/tắt tool. Không cho tắt model mặc định hệ thống."""
+    """Bật/tắt tool."""
     data = _seed_llm_from_env(load())
     tools = data.get("llm_tools", [])
-    tool = next((t for t in tools if t.get("id") == tool_id), None)
+    tool = next((t for t in tools if t.get("id") == tool_id or t.get("model") == tool_id or t.get("name") == tool_id), None)
     if not tool:
         return None
+    tid = tool["id"]
     is_def = tool.get("model") in DEFAULT_SYSTEM_MODELS or tool.get("is_default", False)
     if is_def and not enabled:
         raise ValueError(f"Model mặc định {tool['model']} luôn ở trạng thái bật")
     tool["enabled"] = bool(enabled)
     if not enabled:
-        fallback = next((t["id"] for t in tools if t.get("enabled", True) and t["id"] != tool_id), "")
+        fallback = next((t["id"] for t in tools if t.get("enabled", True) and t.get("id") != tid), "")
         roles = data.get("role_models", {})
         for r in ROLE_KEYS:
-            if roles.get(r) == tool_id:
+            if roles.get(r) in (tid, tool.get("model"), tool_id):
                 roles[r] = fallback
         data["role_models"] = roles
     save(data)
     return tool
 
 
+def _role_default_tool_id(role: str, tools: list[dict]) -> str:
+    defaults = {
+        "planner": config.MODEL_PLANNER,
+        "coder": config.MODEL_CODER,
+        "critic": config.MODEL_CRITIC,
+        "summary": config.MODEL_SUMMARY,
+    }
+    target_model = defaults.get(role, "")
+    matched = next((t["id"] for t in tools if t.get("model") == target_model and t.get("enabled", True)), "")
+    if matched:
+        return matched
+    return next((t["id"] for t in tools if t.get("enabled", True)), "")
+
+
 def delete_llm_tool(tool_id: str) -> bool:
-    """Xóa user-added tool. Không thể xóa model mặc định."""
+    """Xóa LLM tool khỏi hệ thống (chỉ cho phép xóa user-added tool)."""
     data = _seed_llm_from_env(load())
     tools = data.get("llm_tools", [])
-    tool = next((t for t in tools if t.get("id") == tool_id), None)
+    tool = next((t for t in tools if t.get("id") == tool_id or t.get("model") == tool_id or t.get("name") == tool_id), None)
     if not tool:
         return False
     is_def = tool.get("model") in DEFAULT_SYSTEM_MODELS or tool.get("is_default", False)
     if is_def:
         raise ValueError(f"Không thể xóa model mặc định hệ thống ({tool['model']})")
     
-    data["llm_tools"] = [t for t in tools if t["id"] != tool_id]
-    fallback = next((t["id"] for t in data["llm_tools"] if t.get("enabled", True)), "")
+    tid = tool["id"]
+    tmodel = tool.get("model", "")
+    data["llm_tools"] = [t for t in tools if t.get("id") != tid]
+    
     roles = data.get("role_models", {})
     for r in ROLE_KEYS:
-        if roles.get(r) == tool_id:
-            roles[r] = fallback
+        if roles.get(r) in (tid, tmodel, tool_id):
+            roles[r] = _role_default_tool_id(r, data["llm_tools"])
     data["role_models"] = roles
     save(data)
     return True

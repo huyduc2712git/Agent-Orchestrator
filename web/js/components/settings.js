@@ -163,15 +163,7 @@ const ROLE_UI_META = {
 };
 
 function formatModelOptionLabel(tool) {
-  const modelName = tool.model || "Unknown";
-  let host = tool.base_url || "Built-in System";
-  if (host.includes("opencode.ai")) host = "OpenCode AI";
-  else if (host.includes("dashscope")) host = "Aliyun DashScope";
-  else if (host.includes("openai.com")) host = "OpenAI";
-  else if (host.includes("anthropic")) host = "Anthropic";
-  else if (host.includes("groq")) host = "Groq";
-  else host = host.replace(/^https?:\/\//i, "").split("/")[0];
-  return `${modelName}   —   (${host})`;
+  return tool.model || tool.name || "Unknown";
 }
 
 function renderRoleModels(roleModels, roleLabels, tools, hasActiveTasks) {

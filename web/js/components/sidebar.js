@@ -65,14 +65,17 @@ export function renderSidebar() {
 
     const head = document.createElement("div");
     head.className = "project-name" + (state.activeProject === p.slug ? " selected" : "");
-    if (p.project_dir) head.title = p.project_dir;
+    head.title = p.name || p.slug;
     head.innerHTML = `
       <span class="chevron">▼</span>
       ${getProjectIcon(p)}
       <span class="project-label">${escapeHtml(p.name || p.slug)}</span>
       <button class="project-remove" title="Xóa project" type="button">×</button>`;
-    head.querySelector(".project-label").onclick = (e) => { e.stopPropagation(); selectProject(p.slug); };
-    head.querySelector(".chevron").onclick = (e) => { e.stopPropagation(); selectProject(p.slug); };
+    head.onclick = (e) => {
+      if (e.target.closest(".project-remove")) return;
+      e.stopPropagation();
+      selectProject(p.slug);
+    };
     head.querySelector(".project-remove").onclick = (e) => {
       e.stopPropagation();
       removeProject(p.slug, p.name || p.slug);

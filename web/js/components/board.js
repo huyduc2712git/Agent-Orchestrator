@@ -189,7 +189,7 @@ export function subtasksFor(t) {
     html += `
     <div class="task-card-subtasks task-card-bugs">
       <div class="subtasks-header">
-        <span class="subtasks-label">BUGS (${open} mở / ${bugs.length})</span>
+        <span class="subtasks-label">BUGS (${open} / ${bugs.length})</span>
       </div>
       <div class="subtasks-list">${renderRows(bugs, "bug")}</div>
     </div>`;

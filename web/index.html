@@ -9,7 +9,7 @@
       type="image/svg+xml"
       href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' rx='115' fill='%23843BFF'/><path d='M 135,360 C 115,250 150,100 260,100 C 370,100 400,180 395,250 C 400,260 430,265 460,270 C 490,275 480,320 455,315 C 420,310 400,310 385,330 C 375,365 360,390 340,405 C 315,415 295,390 280,390 C 265,390 245,425 220,415 C 195,405 185,375 170,380 C 155,385 125,400 135,360 Z' fill='%23FFFFFF'/><ellipse cx='265' cy='215' rx='17' ry='26' fill='%23000000'/><ellipse cx='335' cy='215' rx='17' ry='26' fill='%23000000'/></svg>"
     />
-    <link rel="stylesheet" href="/static/styles.css?v=52" />
+    <link rel="stylesheet" href="/static/styles.css?v=71" />
   </head>
   <body class="view-board-active">
     <div class="app-shell">
@@ -368,32 +368,59 @@
             <p class="settings-hint" id="projects-root-effective" style="margin-top: 10px;"></p>
           </div>
         </div>
+      </div>
+    </div>
 
-
-    <!-- New project modal -->
+    <!-- New project modal (sibling of settings — không nest trong settings-backdrop) -->
     <div class="modal-backdrop hidden" id="project-backdrop">
-      <div class="modal modal-settings">
+      <div class="modal modal-settings modal-new-project">
         <div class="modal-header">
           <h2>New project</h2>
           <button class="modal-close" id="project-close">×</button>
         </div>
-        <p class="settings-hint">
-          Tạo project trước, rồi chọn nó — mọi task mới từ Chat sẽ gắn vào
-          project đang chọn. Nên chỉ định thư mục ngoài Orchestrator (repo nặng).
+        <p class="settings-hint" id="project-hint">
+          Tạo project rồi chọn nó — task mới từ Chat gắn vào project đang chọn.
         </p>
+        <div class="project-mode-tabs" role="tablist">
+          <button type="button" class="project-mode-tab active" data-mode="folder" id="project-mode-folder">
+            Thư mục mới
+          </button>
+          <button type="button" class="project-mode-tab" data-mode="git" id="project-mode-git">
+            Git clone
+          </button>
+        </div>
         <form class="token-form" id="project-form" style="flex-direction: column; align-items: stretch;">
-          <input
-            type="text"
-            id="project-name"
-            placeholder="Tên project (vd: jtshop)"
-            required
-          />
-          <input
-            type="text"
-            id="project-dir"
-            placeholder="Thư mục làm việc (vd: D:\Dev\jtshop) — để trống = Projects root"
-          />
-          <button type="submit" id="project-add">Tạo</button>
+          <div class="project-fields" id="project-fields-folder">
+            <input
+              type="text"
+              id="project-name"
+              placeholder="Tên project (vd: jtshop)"
+              required
+            />
+            <input
+              type="text"
+              id="project-dir"
+              placeholder="Thư mục làm việc (vd: D:\Dev\jtshop) — để trống = Projects root"
+            />
+          </div>
+          <div class="project-fields hidden" id="project-fields-git">
+            <input
+              type="url"
+              id="project-git-url"
+              placeholder="Git URL (https://github.com/org/repo.git)"
+            />
+            <input
+              type="text"
+              id="project-git-name"
+              placeholder="Tên hiển thị (để trống = tên repo)"
+            />
+            <input
+              type="text"
+              id="project-git-dir"
+              placeholder="Thư mục clone (để trống = Projects root / tên-repo)"
+            />
+          </div>
+          <button type="submit" id="project-add">Tạo project</button>
         </form>
         <div class="settings-msg" id="project-msg"></div>
       </div>
@@ -425,6 +452,6 @@
       </div>
     </div>
 
-    <script type="module" src="/static/js/main.js?v=58"></script>
+    <script type="module" src="/static/js/main.js?v=71"></script>
   </body>
 </html>

@@ -57,6 +57,13 @@ async def run_agent(
             log.info("[%s/%s] Task hoặc Task cha status là '%s' — dừng agent loop lập tức.", agent_name, task.id, status_str)
             return f"[Tiến trình bị ngắt do task hoặc task cha chuyển sang {status_str}]"
 
+        # Nhắc nhở Agent khi gần chạm giới hạn lượt (còn 5 lượt cuối)
+        if iteration == max_iterations - 5:
+            messages.append({
+                "role": "user",
+                "content": f"⚠️ CẢNH BÁO TIẾN ĐỘ: Bạn đã sử dụng {iteration}/{max_iterations} lượt gọi tool và chỉ còn 5 lượt cuối cùng! Hãy tập trung hoàn tất các bước chính, kiểm tra kết quả và tổng kết/báo cáo công việc ngay.",
+            })
+
         msg = await llm.chat(
             messages, tools=tools, model=model, base_url=base_url, api_key=api_key
         )

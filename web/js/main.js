@@ -4,7 +4,7 @@ import { state, $, updateFooterProject } from "./state.js";
 import { loadBoard, loadProjects, blockTask, selectProject } from "./api.js";
 import { renderBoard } from "./components/board.js";
 import { renderSidebar, switchView, goChat, notifyTab } from "./components/sidebar.js";
-import { openModal, openNewProject, renderEvent } from "./components/modal.js";
+import { openModal, openNewProject, setProjectCreateMode, renderEvent } from "./components/modal.js";
 import { loadChat, sendChatMessage, resizeChatInput, resetChatInputHeight, appendChatMessage, renderChatMessage, setThinking } from "./components/chat.js";
 import { initSettingsEvents, openSettingsModal } from "./components/settings.js";
 
@@ -91,36 +91,66 @@ function initEvents() {
   $("project-backdrop")?.addEventListener("click", (e) => {
     if (e.target === $("project-backdrop")) $("project-backdrop").classList.add("hidden");
   });
+  document.querySelectorAll(".project-mode-tab").forEach((btn) => {
+    btn.addEventListener("click", () => setProjectCreateMode(btn.dataset.mode || "folder"));
+  });
 
-  // Project Form
+  // Project Form — folder mới hoặc git clone
   $("project-form")?.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const name = $("project-name").value.trim();
-    const project_dir = ($("project-dir")?.value || "").trim();
-    if (!name) return;
+    const isGit = $("project-mode-git")?.classList.contains("active");
+    const msg = $("project-msg");
+    let payload;
+    if (isGit) {
+      const git_url = ($("project-git-url")?.value || "").trim();
+      if (!git_url) {
+        if (msg) { msg.textContent = "Nhập Git URL (GitHub/GitLab)."; msg.className = "settings-msg err"; }
+        return;
+      }
+      payload = {
+        git_url,
+        name: ($("project-git-name")?.value || "").trim(),
+        project_dir: ($("project-git-dir")?.value || "").trim(),
+      };
+    } else {
+      const name = ($("project-name")?.value || "").trim();
+      if (!name) return;
+      payload = {
+        name,
+        project_dir: ($("project-dir")?.value || "").trim(),
+      };
+    }
     $("project-add").disabled = true;
+    if (msg) {
+      msg.textContent = isGit ? "Đang clone repo…" : "Đang tạo…";
+      msg.className = "settings-msg ok";
+    }
     try {
       const res = await fetch("/api/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, project_dir }),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (res.ok) {
         state.projects = state.projects.filter((p) => p.slug !== data.project.slug);
         state.projects.push(data.project);
         state.activeProject = data.project.slug;
-        $("project-name").value = "";
-        if ($("project-dir")) $("project-dir").value = "";
+        ["project-name", "project-dir", "project-git-url", "project-git-name", "project-git-dir"].forEach((id) => {
+          if ($(id)) $(id).value = "";
+        });
         $("project-backdrop")?.classList.add("hidden");
         updateFooterProject();
+        renderSidebar();
         renderBoard();
-      } else {
-        const msg = $("project-msg");
-        if (msg) {
-          msg.textContent = data.error || "Lỗi";
-          msg.className = "settings-msg err";
-        }
+      } else if (msg) {
+        msg.textContent = data.error || "Lỗi";
+        msg.className = "settings-msg err";
+      }
+    } catch (err) {
+      if (msg) {
+        msg.textContent = String(err);
+        msg.className = "settings-msg err";
       }
     } finally {
       $("project-add").disabled = false;

@@ -13,9 +13,10 @@ router = APIRouter(tags=["projects"])
 
 
 class ProjectIn(BaseModel):
-    name: str
+    name: str = ""
     slug: str = ""
     project_dir: str = ""
+    git_url: str = ""
 
 
 class ProjectPatch(BaseModel):
@@ -82,11 +83,63 @@ async def list_projects():
 
 @router.post("/api/projects")
 async def create_project(body: ProjectIn):
-    name = body.name.strip()
+    """Tạo project từ thư mục mới hoặc git clone."""
+    from pathlib import Path
+
+    from .. import git_ops
+    from ..paths import resolve_project_dir
+
+    git_url = (body.git_url or "").strip()
+    name = (body.name or "").strip()
+    project_dir = (body.project_dir or "").strip()
+
+    if git_url:
+        info = git_ops.parse_repo(git_url)
+        if not info:
+            return JSONResponse(
+                {"error": "URL không hợp lệ — cần GitHub/GitLab (https://…)"},
+                status_code=400,
+            )
+        repo_name = info.get("name") or "project"
+        name = name or repo_name
+        slug = (body.slug or name).strip()
+        if not project_dir:
+            project_dir, _ = resolve_project_dir(
+                slug=slug,
+                projects_root=settings.effective_projects_root(),
+            )
+        else:
+            Path(project_dir).mkdir(parents=True, exist_ok=True)
+
+        clone = git_ops.ensure_clone(git_url, project_dir)
+        if not clone.get("ok"):
+            return JSONResponse(
+                {"error": clone.get("error") or "Clone thất bại"},
+                status_code=400,
+            )
+        final_dir = clone.get("path") or project_dir
+        p = settings.upsert_project(slug, name=name, project_dir=final_dir)
+        p = {**p, "git_info": get_git_info(final_dir)}
+        store.add_chat(
+            "conan",
+            f"Đã tạo project `{p['slug']}` từ clone `{info.get('https_url')}` → `{final_dir}`.",
+        )
+        return {
+            "ok": True,
+            "project": p,
+            "active_project": p["slug"],
+            "clone": {
+                "path": final_dir,
+                "branch": clone.get("branch"),
+                "message": clone.get("message"),
+            },
+        }
+
     if not name:
-        return JSONResponse({"error": "cần tên project"}, status_code=400)
+        return JSONResponse({"error": "cần tên project hoặc git_url"}, status_code=400)
     slug = (body.slug or name).strip()
-    p = settings.upsert_project(slug, name=name, project_dir=body.project_dir.strip())
+    p = settings.upsert_project(slug, name=name, project_dir=project_dir)
+    p = {**p, "git_info": get_git_info(p.get("project_dir") or "")}
     return {"ok": True, "project": p, "active_project": p["slug"]}
 
 
