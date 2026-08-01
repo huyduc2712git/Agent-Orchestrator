@@ -569,168 +569,145 @@ def _ensure_parent_testing(parent: Task) -> None:
             pass
 
 
-def _gate_security_pentest(parent: Task, subtasks: list[Task]) -> str:
-    """Gate tuần tự Akai → Amuro trước Final Review.
+def _gate_critic_stage(
+    parent: Task,
+    *,
+    agent: str,
+    display: str,
+    heading: str,
+    task_title: str,
+    task_description: str,
+    task_tags: list[str],
+    retry_tag: str,
+    refail_tag_prefix: str,
+    on_created_msg: str,
+) -> str:
+    """Một stage critic (Security/Pentest) dùng chung — tránh duplicate Akai/Amuro.
 
     Returns:
-        "proceed" — cả hai PASS, được chạy Conan
-        "wait" — đã tạo/đang chờ subtask hoặc đã giao bug
+        "proceed" — stage này PASS
+        "wait" — đã tạo/đang chờ subtask, requeue, hoặc đã giao bug
     """
-    preview_url = f"{config.BASE_URL}/preview/{parent.project}/"
-    current = store.list_tasks(parent_id=parent.id)
-
-    security_tasks = [t for t in current if t.assignee == "akai"]
-    if not security_tasks:
-        sec = store.create_task(
-            title=f"Security Review — {parent.title}",
-            description=(
-                f"Review bảo mật cho {parent.id}. Không sửa code, chỉ báo cáo.\n"
-                f"Preview URL: {preview_url}\n"
-                "Kết thúc bằng post_message '## Security Review — PASS' hoặc "
-                "'## Security Review — FAIL' (+ create_bug_ticket cho Critical/High)."
-            ),
-            assignee="akai",
+    stage_tasks = [t for t in store.list_tasks(parent_id=parent.id) if t.assignee == agent]
+    if not stage_tasks:
+        created = store.create_task(
+            title=task_title,
+            description=task_description,
+            assignee=agent,
             project=parent.project,
             project_dir=parent.project_dir,
             parent_id=parent.id,
             created_by="conan",
-            tags=["security-review"],
+            tags=list(task_tags),
         )
         _ensure_parent_testing(parent)
-        store.add_chat(
-            "conan",
-            f"{parent.id}: QA PASS — giao Akai Security Review ({sec.id}) trước Final Review.",
+        store.add_chat("conan", on_created_msg.format(id=created.id))
+        return "wait"
+
+    stage = stage_tasks[-1]
+    if stage.status in ("backlog", "in_progress", "blocked"):
+        return "wait"
+
+    verdict, text = _critic_verdict(stage.id, agent, heading)
+    if verdict == "UNKNOWN" and retry_tag not in (stage.tags or []):
+        tags = list(stage.tags or [])
+        tags.append(retry_tag)
+        store.update_task_fields(stage.id, tags=tags)
+        store.set_status(stage.id, "in_progress", "conan")
+        store.set_status(stage.id, "backlog", "conan")
+        store.add_event(
+            stage.id, "conan", "system",
+            f"Báo cáo {display} chưa có PASS/FAIL rõ — {display} chạy lại.",
         )
+        store.add_chat("conan", f"{parent.id}: {display} chưa có verdict rõ — requeue.")
         return "wait"
 
-    sec = security_tasks[-1]
-    if sec.status in ("backlog", "in_progress", "blocked"):
-        return "wait"
-
-    sec_verdict, sec_text = _critic_verdict(sec.id, "akai", "SECURITY REVIEW")
-    if sec_verdict == "UNKNOWN" and "sec-retry" not in (sec.tags or []):
-        tags = list(sec.tags or [])
-        tags.append("sec-retry")
-        store.update_task_fields(sec.id, tags=tags)
-        store.set_status(sec.id, "in_progress", "conan")
-        store.set_status(sec.id, "backlog", "conan")
-        store.add_event(sec.id, "conan", "system", "Báo cáo Security chưa có PASS/FAIL rõ — Akai chạy lại.")
-        store.add_chat("conan", f"{parent.id}: Akai chưa có verdict rõ — requeue Security Review.")
-        return "wait"
-
-    if sec_verdict == "FAIL":
+    if verdict == "FAIL":
         open_bugs = _open_related_bugs(parent)
         if open_bugs:
-            n = _assign_bugs_to_kid(parent, open_bugs)
+            n = _assign_bugs_to_fixer(parent, open_bugs)
             if n < 0:
                 store.set_status(parent.id, "blocked", "conan")
                 store.add_chat(
                     "conan",
-                    f"{parent.id}: Security FAIL + còn bug sau {MAX_FIX_ROUNDS} round — cần bạn xem board.",
+                    f"{parent.id}: {display} FAIL + còn bug sau {MAX_FIX_ROUNDS} round — cần bạn xem board.",
                 )
                 return "wait"
             store.add_chat(
                 "conan",
-                f"{parent.id}: Security FAIL — giao Kid fix {', '.join(b.id for b in open_bugs)} (round {n}).",
+                f"{parent.id}: {display} FAIL — giao fixer "
+                f"{', '.join(b.id for b in open_bugs)} (round {n}).",
             )
             return "wait"
-        tag = f"resec-{_fix_rounds(parent) + 1}"
-        if tag not in (sec.tags or []):
-            tags = list(sec.tags or [])
+        tag = f"{refail_tag_prefix}-{_fix_rounds(parent) + 1}"
+        if tag not in (stage.tags or []):
+            tags = list(stage.tags or [])
             tags.append(tag)
-            store.update_task_fields(sec.id, tags=tags)
-            store.set_status(sec.id, "in_progress", "conan")
-            store.set_status(sec.id, "backlog", "conan")
+            store.update_task_fields(stage.id, tags=tags)
+            store.set_status(stage.id, "in_progress", "conan")
+            store.set_status(stage.id, "backlog", "conan")
             store.add_event(
-                sec.id, "conan", "system",
-                f"Security FAIL nhưng chưa có bug mở — Akai phải create_bug_ticket rồi FAIL lại.\n{sec_text[:2000]}",
+                stage.id, "conan", "system",
+                f"{display} FAIL nhưng chưa có bug mở — {display} phải create_bug_ticket rồi FAIL lại.\n"
+                f"{text[:2000]}",
             )
-            store.add_chat("conan", f"{parent.id}: Security FAIL — trả Akai tạo bug ticket.")
+            store.add_chat("conan", f"{parent.id}: {display} FAIL — trả {display} tạo bug ticket.")
             return "wait"
         store.set_status(parent.id, "blocked", "conan")
-        store.add_chat("conan", f"{parent.id}: Security FAIL kéo dài — dừng, cần bạn xem board.")
+        store.add_chat("conan", f"{parent.id}: {display} FAIL kéo dài — dừng, cần bạn xem board.")
         return "wait"
 
-    if sec_verdict != "PASS":
+    if verdict != "PASS":
         return "wait"
-
-    pentest_tasks = [t for t in store.list_tasks(parent_id=parent.id) if t.assignee == "amuro"]
-    if not pentest_tasks:
-        pen = store.create_task(
-            title=f"Penetration Test — {parent.title}",
-            description=(
-                f"Pentest preview URL của {parent.id}.\n"
-                f"Preview URL: {preview_url}\n"
-                "CHỈ tấn công URL preview/staging được cấp. Không sửa source.\n"
-                "Kết thúc bằng post_message '## Penetration Test — PASS' hoặc "
-                "'## Penetration Test — FAIL' (+ create_bug_ticket)."
-            ),
-            assignee="amuro",
-            project=parent.project,
-            project_dir=parent.project_dir,
-            parent_id=parent.id,
-            created_by="conan",
-            tags=["penetration-test"],
-        )
-        _ensure_parent_testing(parent)
-        store.add_chat(
-            "conan",
-            f"{parent.id}: Security PASS — giao Amuro Pentest ({pen.id}) trước Final Review.",
-        )
-        return "wait"
-
-    pen = pentest_tasks[-1]
-    if pen.status in ("backlog", "in_progress", "blocked"):
-        return "wait"
-
-    pen_verdict, pen_text = _critic_verdict(pen.id, "amuro", "PENETRATION TEST")
-    if pen_verdict == "UNKNOWN" and "pen-retry" not in (pen.tags or []):
-        tags = list(pen.tags or [])
-        tags.append("pen-retry")
-        store.update_task_fields(pen.id, tags=tags)
-        store.set_status(pen.id, "in_progress", "conan")
-        store.set_status(pen.id, "backlog", "conan")
-        store.add_event(pen.id, "conan", "system", "Báo cáo Pentest chưa có PASS/FAIL rõ — Amuro chạy lại.")
-        store.add_chat("conan", f"{parent.id}: Amuro chưa có verdict rõ — requeue Pentest.")
-        return "wait"
-
-    if pen_verdict == "FAIL":
-        open_bugs = _open_related_bugs(parent)
-        if open_bugs:
-            n = _assign_bugs_to_kid(parent, open_bugs)
-            if n < 0:
-                store.set_status(parent.id, "blocked", "conan")
-                store.add_chat(
-                    "conan",
-                    f"{parent.id}: Pentest FAIL + còn bug sau {MAX_FIX_ROUNDS} round — cần bạn xem board.",
-                )
-                return "wait"
-            store.add_chat(
-                "conan",
-                f"{parent.id}: Pentest FAIL — giao Kid fix {', '.join(b.id for b in open_bugs)} (round {n}).",
-            )
-            return "wait"
-        tag = f"repen-{_fix_rounds(parent) + 1}"
-        if tag not in (pen.tags or []):
-            tags = list(pen.tags or [])
-            tags.append(tag)
-            store.update_task_fields(pen.id, tags=tags)
-            store.set_status(pen.id, "in_progress", "conan")
-            store.set_status(pen.id, "backlog", "conan")
-            store.add_event(
-                pen.id, "conan", "system",
-                f"Pentest FAIL nhưng chưa có bug mở — Amuro phải create_bug_ticket rồi FAIL lại.\n{pen_text[:2000]}",
-            )
-            store.add_chat("conan", f"{parent.id}: Pentest FAIL — trả Amuro tạo bug ticket.")
-            return "wait"
-        store.set_status(parent.id, "blocked", "conan")
-        store.add_chat("conan", f"{parent.id}: Pentest FAIL kéo dài — dừng, cần bạn xem board.")
-        return "wait"
-
-    if pen_verdict != "PASS":
-        return "wait"
-
     return "proceed"
+
+
+def _gate_security_pentest(parent: Task, subtasks: list[Task]) -> str:
+    """Gate tuần tự Akai → Amuro trước Final Review (2 lần gọi _gate_critic_stage)."""
+    preview_url = f"{config.BASE_URL}/preview/{parent.project}/"
+
+    sec = _gate_critic_stage(
+        parent,
+        agent="akai",
+        display="Akai",
+        heading="SECURITY REVIEW",
+        task_title=f"Security Review — {parent.title}",
+        task_description=(
+            f"Review bảo mật cho {parent.id}. Không sửa code, chỉ báo cáo.\n"
+            f"Preview URL: {preview_url}\n"
+            "Kết thúc bằng post_message '## Security Review — PASS' hoặc "
+            "'## Security Review — FAIL' (+ create_bug_ticket cho Critical/High)."
+        ),
+        task_tags=["security-review"],
+        retry_tag="sec-retry",
+        refail_tag_prefix="resec",
+        on_created_msg=(
+            f"{parent.id}: QA PASS — giao Akai Security Review ({{id}}) trước Final Review."
+        ),
+    )
+    if sec != "proceed":
+        return sec
+
+    return _gate_critic_stage(
+        parent,
+        agent="amuro",
+        display="Amuro",
+        heading="PENETRATION TEST",
+        task_title=f"Penetration Test — {parent.title}",
+        task_description=(
+            f"Pentest preview URL của {parent.id}.\n"
+            f"Preview URL: {preview_url}\n"
+            "CHỈ tấn công URL preview/staging được cấp. Không sửa source.\n"
+            "Kết thúc bằng post_message '## Penetration Test — PASS' hoặc "
+            "'## Penetration Test — FAIL' (+ create_bug_ticket)."
+        ),
+        task_tags=["penetration-test"],
+        retry_tag="pen-retry",
+        refail_tag_prefix="repen",
+        on_created_msg=(
+            f"{parent.id}: Security PASS — giao Amuro Pentest ({{id}}) trước Final Review."
+        ),
+    )
 
 
 def _parse_conan_verdict(result: str) -> bool:
@@ -775,14 +752,25 @@ def _has_bug_tickets(parent: Task) -> bool:
     return bool(store.list_tasks(parent_id=parent.id, type="bug"))
 
 
-def _assign_bugs_to_kid(parent: Task, bugs: list[Task]) -> int:
-    """Giao bug cho Kid xử lý."""
+def _fixer_for_bug(bug: Task) -> str:
+    """Chọn fixer theo tag area-*; bug cũ không có tag → kid (giữ hành vi lịch sử)."""
+    tags = bug.tags or []
+    if "area-backend" in tags:
+        return "agasa"
+    if "area-frontend" in tags:
+        return "kid"
+    return "kid"
+
+
+def _assign_bugs_to_fixer(parent: Task, bugs: list[Task]) -> int:
+    """Giao bug cho Kid (frontend) hoặc Agasa (backend) theo tag area-*."""
     rounds = _fix_rounds(parent)
     if rounds >= MAX_FIX_ROUNDS:
         return -1
     store.update_task_fields(parent.id, tags=[*parent.tags, f"fix-round-{rounds + 1}"])
     for bug in bugs:
-        store.update_task_fields(bug.id, assignee="kid", parent_id=parent.id)
+        fixer = _fixer_for_bug(bug)
+        store.update_task_fields(bug.id, assignee=fixer, parent_id=parent.id)
         if bug.status in ("blocked", "failed", "testing", "review", "done"):
             try:
                 store.set_status(bug.id, "backlog", "conan")
@@ -791,7 +779,7 @@ def _assign_bugs_to_kid(parent: Task, bugs: list[Task]) -> int:
                 store.set_status(bug.id, "backlog", "conan")
         store.add_event(
             bug.id, "conan", "system",
-            f"QA FAIL — giao Kid fix (round {rounds + 1}).",
+            f"FAIL — giao {fixer} fix (round {rounds + 1}).",
         )
     if parent.status in ("blocked", "failed", "testing", "review", "backlog"):
         try:
@@ -803,11 +791,12 @@ def _assign_bugs_to_kid(parent: Task, bugs: list[Task]) -> int:
 
 
 def _return_to_qa_for_bugs(qa: Task, parent: Task, notes: str, mark_tag: str, chat: str) -> None:
-    """Conan/ hệ thống không tạo bug — trả Heiji để create_bug_ticket rồi Kid fix."""
+    """Conan/ hệ thống không tạo bug — trả Heiji để create_bug_ticket rồi fixer xử lý."""
     detail = (notes or "")[:3500]
     store.add_event(
         qa.id, "conan", "system",
-        f"{mark_tag}\nBẮT BUỘC: với mỗi lỗi bên dưới gọi create_bug_ticket (assignee Kid qua parent), "
+        f"{mark_tag}\nBẮT BUỘC: với mỗi lỗi bên dưới gọi create_bug_ticket "
+        f"(area=frontend→Kid / area=backend→Agasa), "
         f"rồi VERDICT: FAIL. Không PASS khi còn lỗi.\n\n{detail}",
     )
     _requeue_qa(
@@ -885,10 +874,10 @@ async def check_parent_progress(parent_id: str) -> None:
     if any(t.status in ("backlog", "in_progress", "blocked") for t in subtasks):
         return
 
-    # Fix round: bug do QA tạo → giao Kid (Conan không tạo bug)
+    # Fix round: bug do QA tạo → giao fixer theo area (Conan không tạo bug)
     open_bugs = _open_related_bugs(parent)
     if open_bugs:
-        n = _assign_bugs_to_kid(parent, open_bugs)
+        n = _assign_bugs_to_fixer(parent, open_bugs)
         if n < 0:
             store.set_status(parent_id, "blocked", "conan")
             store.add_chat(
@@ -900,8 +889,8 @@ async def check_parent_progress(parent_id: str) -> None:
         store.add_chat(
             "conan",
             f"QA đã tạo {len(open_bugs)} bug ở {parent.id} — fix round {n}: "
-            + ", ".join(b.id for b in open_bugs)
-            + " → Kid fix, rồi Heiji QA lại (chưa tới Conan).",
+            + ", ".join(f"{b.id}→{_fixer_for_bug(b)}" for b in open_bugs)
+            + " → rồi Heiji QA lại (chưa tới Conan).",
         )
         return
 
@@ -925,11 +914,11 @@ async def _closure(parent: Task, subtasks: list[Task]) -> None:
         )
         return
 
-    # ===== QA FAIL: không gọi Conan. Bug do QA tạo → Kid; thiếu bug → trả QA tạo ticket =====
+    # ===== QA FAIL: không gọi Conan. Bug do QA tạo → fixer theo area; thiếu bug → trả QA =====
     if verdict == "FAIL":
         open_bugs = _open_related_bugs(parent)
         if open_bugs:
-            n = _assign_bugs_to_kid(parent, open_bugs)
+            n = _assign_bugs_to_fixer(parent, open_bugs)
             if n < 0:
                 store.set_status(parent.id, "blocked", "conan")
                 store.add_chat(
@@ -939,7 +928,8 @@ async def _closure(parent: Task, subtasks: list[Task]) -> None:
                 return
             store.add_chat(
                 "conan",
-                f"{parent.id}: QA FAIL — giao Kid fix {', '.join(b.id for b in open_bugs)} "
+                f"{parent.id}: QA FAIL — giao fixer "
+                f"{', '.join(f'{b.id}→{_fixer_for_bug(b)}' for b in open_bugs)} "
                 f"(round {n}). Conan chỉ review sau khi QA PASS.",
             )
             return
@@ -949,7 +939,7 @@ async def _closure(parent: Task, subtasks: list[Task]) -> None:
                 qa, parent, qa_text,
                 "qa-must-file-bugs",
                 f"{parent.id}: Heiji VERDICT FAIL nhưng chưa create_bug_ticket — "
-                f"trả QA tạo bug cho Kid (Conan chưa vào).",
+                f"trả QA tạo bug (area frontend/backend) — Conan chưa vào.",
             )
             return
 
@@ -957,7 +947,7 @@ async def _closure(parent: Task, subtasks: list[Task]) -> None:
         if qa and f"reqa-{max(rounds, 1)}" not in qa.tags:
             _requeue_qa(
                 qa, f"reqa-{max(rounds, 1)}",
-                "QA từng FAIL — requeue Heiji verify lại sau khi Kid fix (trước Conan).",
+                "QA từng FAIL — requeue Heiji verify lại sau khi fixer xong (trước Conan).",
                 f"Bug/fix ở {parent.id} xong — Heiji QA lại. Chỉ khi PASS mới tới Conan.",
             )
             return

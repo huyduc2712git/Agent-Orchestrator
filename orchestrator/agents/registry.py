@@ -15,7 +15,8 @@ Quy tắc chung (bắt buộc):
 
 BUG_REPORT_RULE = (
     "- Nếu phát hiện lỗi/vấn đề ngoài phạm vi task: dùng search_tasks kiểm tra "
-    "trùng lặp, rồi create_bug_ticket với evidence + severity + repro_steps. "
+    "trùng lặp, rồi create_bug_ticket với evidence + severity + repro_steps + area "
+    "('frontend'→Kid, 'backend'→Agasa cho API/DB/auth/SQL injection/IDOR). "
     "KHÔNG chôn bug trong comment."
 )
 

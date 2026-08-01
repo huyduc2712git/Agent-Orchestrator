@@ -11,7 +11,7 @@ SCRIPTS_DIR = ROOT / "scripts"
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-# 9 file test offline chính
+# Offline test suite (figma cần token thật — có thể FAIL nếu chưa cấu hình)
 TEST_FILES = [
     ("test_agent_consistency.py", "Tính nhất quán tên agent toàn codebase"),
     ("test_board.py", "State machine & board store guards"),
@@ -20,8 +20,11 @@ TEST_FILES = [
     ("test_prompt_tool_consistency.py", "Đối chiếu prompt & tool registry"),
     ("test_heiji_checklist_coverage.py", "Độ phủ QA checklist của Heiji"),
     ("test_security_pipeline.py", "Cấu hình role & tools Akai/Amuro"),
-    ("test_figma.py", "Parse link & auth error handling Figma"),
     ("test_git.py", "Git clone & status check ops"),
+    ("test_run_command_cross_platform.py", "run_command cross-platform shell"),
+    ("test_bug_area_routing.py", "Bug route Kid/Agasa theo area"),
+    ("test_gate_critic_stage.py", "Gate Security/Pentest dùng chung"),
+    ("test_figma.py", "Parse link & auth error handling Figma"),
 ]
 
 

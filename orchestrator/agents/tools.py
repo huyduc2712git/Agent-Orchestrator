@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -177,7 +178,8 @@ TOOL_SCHEMAS: dict[str, dict] = {
             "description": (
                 "Tạo bug ticket chính thức với schema bắt buộc. Chỉ dùng sau khi đã "
                 "search_tasks để chắc chắn chưa có ticket trùng. Bug sẽ tự động được "
-                "link 'related' về task hiện tại."
+                "link 'related' về task hiện tại. Chỉ định area để giao đúng fixer: "
+                "frontend→Kid, backend→Agasa."
             ),
             "parameters": {
                 "type": "object",
@@ -186,6 +188,11 @@ TOOL_SCHEMAS: dict[str, dict] = {
                     "description": {"type": "string", "description": "Evidence, expected vs actual, file/line liên quan"},
                     "severity": {"type": "string", "enum": SEVERITIES},
                     "repro_steps": {"type": "string"},
+                    "area": {
+                        "type": "string",
+                        "enum": ["frontend", "backend"],
+                        "description": "'frontend' -> Kid; 'backend' (API/DB/auth/SQL injection/IDOR) -> Agasa.",
+                    },
                 },
                 "required": ["title", "description", "severity", "repro_steps"],
             },
@@ -375,18 +382,43 @@ class ToolContext:
 
     # --- command / http ---
 
-    def _tool_run_command(self, command: str) -> str:
-        # 1. Tự động đổi && thành ; cho tương thích với PowerShell 5.1 trên Windows
-        command = re.sub(r"\s+&&\s+", "; ", command)
+    def _detect_shell(self) -> tuple[list[str], str]:
+        """Phát hiện shell khả dụng trên máy đang chạy orchestrator."""
+        ps = shutil.which("powershell")
+        if ps:
+            return [ps, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command"], "powershell"
+        pwsh = shutil.which("pwsh")
+        if pwsh:
+            return [pwsh, "-NoProfile", "-Command"], "pwsh"
+        sh = shutil.which("bash") or shutil.which("sh")
+        if sh:
+            return [sh, "-c"], "bash"
+        raise RuntimeError(
+            "Không tìm thấy shell khả dụng (powershell/pwsh/bash/sh) trên máy này"
+        )
 
-        # 2. Tự động đảm bảo Start-Process dùng -WindowStyle Hidden để ẩn hoàn toàn cửa sổ console trên Windows
-        if "Start-Process" in command:
+    def _tool_run_command(self, command: str) -> str:
+        try:
+            shell_prefix, shell_kind = self._detect_shell()
+        except RuntimeError as e:
+            return f"ERROR: {e}"
+
+        # && -> ; chỉ cần thiết cho Windows PowerShell 5.1 (pwsh/bash đều hỗ trợ && native)
+        if shell_kind == "powershell":
+            command = re.sub(r"\s+&&\s+", "; ", command)
+
+        # Start-Process -WindowStyle Hidden chỉ áp dụng khi chạy qua PowerShell/pwsh
+        if shell_kind in ("powershell", "pwsh") and "Start-Process" in command:
             if "-NoNewWindow" in command:
                 command = re.sub(r"-NoNewWindow\b", "", command, flags=re.IGNORECASE)
             if "-WindowStyle" not in command:
-                command = re.sub(r"\bStart-Process\b", "Start-Process -WindowStyle Hidden", command, flags=re.IGNORECASE)
+                command = re.sub(
+                    r"\bStart-Process\b",
+                    "Start-Process -WindowStyle Hidden",
+                    command,
+                    flags=re.IGNORECASE,
+                )
 
-        # 3. Tự động nhận diện lệnh chạy server ngầm (dev/prod server hoặc Start-Process/Start-Job)
         is_one_off = (
             "python -c" in command
             or "py -c" in command
@@ -396,43 +428,70 @@ class ToolContext:
             or "pytest" in command
             or "python test_" in command
         )
-        server_pattern = r"\b(npm\s+(run\s+)?(dev|start)|yarn\s+(dev|start)|bun\s+(run\s+)?(dev|start)|vite|next\s+dev|uvicorn|fastapi\s+dev|node\s+server|python\s+-m\s+uvicorn|python\s+app\.py|python\s+main\.py)\b"
+        server_pattern = (
+            r"\b(npm\s+(run\s+)?(dev|start)|yarn\s+(dev|start)|bun\s+(run\s+)?(dev|start)|"
+            r"vite|next\s+dev|uvicorn|fastapi\s+dev|node\s+server|"
+            r"python\s+-m\s+uvicorn|python\s+app\.py|python\s+main\.py)\b"
+        )
         is_background = not is_one_off and (
             "Start-Process" in command
             or "Start-Job" in command
             or bool(re.search(server_pattern, command, re.IGNORECASE))
         )
 
+        creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
         if is_background:
             original_cmd = command
-            log.info("Khởi chạy background process ngầm: %s", command)
+            log.info("Khởi chạy background process ngầm (%s): %s", shell_kind, command)
 
             try:
-                creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+                if shell_kind in ("powershell", "pwsh"):
+                    argv = shell_prefix + [command]
+                    popen_kwargs: dict = {"creationflags": creationflags}
+                else:
+                    # Agent lỡ viết Start-Process trên máy không có PowerShell → bóc lệnh thật + nohup
+                    inner = re.sub(
+                        r"Start-Process\s+(-WindowStyle\s+\S+\s+)?(-ArgumentList\s+)?",
+                        "",
+                        command,
+                        flags=re.IGNORECASE,
+                    ).strip().strip('"').strip("'")
+                    argv = [shell_prefix[0], "-c", f"nohup {inner} > /dev/null 2>&1 &"]
+                    popen_kwargs = {}
+
                 proc = subprocess.Popen(
-                    ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
+                    argv,
                     cwd=str(self.project_dir),
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     stdin=subprocess.DEVNULL,
-                    creationflags=creationflags,
+                    **popen_kwargs,
                 )
                 try:
                     exit_code = proc.wait(timeout=3.0)
-                    result = f"exit_code={exit_code}\n(Lệnh background/server đã được khởi chạy ngầm thành công)"
+                    result = (
+                        f"exit_code={exit_code}\n"
+                        "(Lệnh background/server đã được khởi chạy ngầm thành công)"
+                    )
                 except subprocess.TimeoutExpired:
-                    result = "exit_code=0\n(Lệnh background/server đã được khởi chạy ngầm thành công)"
+                    result = (
+                        "exit_code=0\n"
+                        "(Lệnh background/server đã được khởi chạy ngầm thành công)"
+                    )
 
-                # Auto-save start_command vào project settings
                 self._auto_save_start_command(original_cmd)
-                return result + "\n💡 Tip: gọi save_start_command để lưu lệnh start — Orchestrator sẽ tự chạy lại khi khởi động."
+                return (
+                    result
+                    + "\n💡 Tip: gọi save_start_command để lưu lệnh start — "
+                    "Orchestrator sẽ tự chạy lại khi khởi động."
+                )
             except Exception as e:
                 return f"ERROR: không thể khởi chạy background process: {e}"
 
         try:
-            creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
             proc = subprocess.run(
-                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
+                shell_prefix + [command],
                 cwd=str(self.project_dir),
                 capture_output=True,
                 text=True,
@@ -444,7 +503,11 @@ class ToolContext:
             out = (proc.stdout or "") + (("\n[stderr]\n" + proc.stderr) if proc.stderr else "")
             return f"exit_code={proc.returncode}\n{out.strip()}"
         except subprocess.TimeoutExpired:
-            return f"ERROR: lệnh vượt quá timeout {config.COMMAND_TIMEOUT_SECONDS}s — nếu khởi chạy background server hãy dùng Start-Process"
+            return (
+                f"ERROR: lệnh vượt quá timeout {config.COMMAND_TIMEOUT_SECONDS}s — "
+                "nếu khởi chạy background server hãy dùng Start-Process (Windows) "
+                "hoặc lệnh server trực tiếp (npm run dev / node server)"
+            )
 
     def _auto_save_start_command(self, command: str) -> None:
         """Tự động lưu lệnh start backend vào project settings khi chạy server ngầm thành công."""
@@ -571,13 +634,39 @@ class ToolContext:
             for t in tasks
         )
 
+    _BACKEND_HINTS = re.compile(
+        r"(\.py\b|/api/|sql\s*injection|\bauth\b|\bidor\b|database|backend|"
+        r"express|fastapi|endpoint|server\.cjs|sqlite|mysql|postgres)",
+        re.IGNORECASE,
+    )
+    _FRONTEND_HINTS = re.compile(
+        r"(\.tsx?\b|\.css\b|\.vue\b|component|render|layout|viewport|"
+        r"mobile|header|button|frontend|\bui\b)",
+        re.IGNORECASE,
+    )
+
+    def _guess_area(self, text: str) -> str:
+        """Đoán area từ mô tả/repro. Mơ hồ → frontend (an toàn hơn với ranh giới Kid)."""
+        has_backend = bool(self._BACKEND_HINTS.search(text or ""))
+        has_frontend = bool(self._FRONTEND_HINTS.search(text or ""))
+        return "backend" if (has_backend and not has_frontend) else "frontend"
+
     def _tool_create_bug_ticket(
-        self, title: str, description: str, severity: str, repro_steps: str
+        self,
+        title: str,
+        description: str,
+        severity: str,
+        repro_steps: str,
+        area: str = "",
     ) -> str:
         if severity not in SEVERITIES:
             return f"ERROR: severity phải là một trong {SEVERITIES}"
         if not (title and description and repro_steps):
             return "ERROR: schema bug bắt buộc đủ title, description, severity, repro_steps"
+        area_norm = (area or "").strip().lower()
+        if area_norm not in ("frontend", "backend"):
+            area_norm = self._guess_area(f"{description}\n{repro_steps}")
+        assignee = "agasa" if area_norm == "backend" else "kid"
         bug = store.create_task(
             title=title,
             description=f"Observed while working on {self.task.id}. {description}",
@@ -585,8 +674,8 @@ class ToolContext:
             project=self.task.project,
             project_dir=self.task.project_dir,
             parent_id=self.task.parent_id or self.task.id,
-            assignee="kid",
-            tags=["discovered-issue", "bug"],
+            assignee=assignee,
+            tags=["discovered-issue", "bug", f"area-{area_norm}"],
             severity=severity,
             repro_steps=repro_steps,
             created_by=self.agent,
@@ -594,9 +683,12 @@ class ToolContext:
         store.add_dep(self.task.id, bug.id, "related")
         store.add_event(
             self.task.id, self.agent, "system",
-            f"Bug ticket {bug.id} đã được tạo và link related: {title}",
+            f"Bug ticket {bug.id} đã được tạo và link related: {title} (area={area_norm}, {assignee})",
         )
-        return f"OK: đã tạo bug {bug.id} (gắn task cha, Kid fix) — đây là BUG ticket, không phải subtask."
+        return (
+            f"OK: đã tạo bug {bug.id} (gắn task cha, {assignee} fix, area={area_norm}) "
+            "— đây là BUG ticket, không phải subtask."
+        )
 
     # --- git tools ---
 
