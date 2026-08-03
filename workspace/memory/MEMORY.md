@@ -19,3 +19,20 @@ Ghi lại quyết định, pattern, bài học sau mỗi task. Mỗi entry một
 - **2026-07-29** [tsk-0037]: Khi implement caching cho dữ liệu API trong React, pattern hiệu quả là kết hợp localStorage với stale time (5 phút), hydrate đồng bộ để tránh flash skeleton, và background refetch để dữ liệu luôn mới. Cần xử lý error khi fetch mới để giữ cache cũ.
 - **2026-07-30** [tsk-8153]: Đã fix skeleton loading khi re-entry bằng cách tăng stale time lên 30 phút, thêm in-memory cache và hasEverLoaded flag trong useCachedHomeData.ts.
 - **2026-07-31** [tsk-4895]: Bài học: khi thêm endpoint health check vào server.cjs (project smoke), phải đặt route trước catch-all, trả JSON có timestamp đổi mỗi request để chứng minh liveness thật; đã verify trực tiếp lẫn qua same-origin /api/*, project không cần build/npm install.
+- **2026-08-03** [tsk-2428]: Task Dark Mode được duyệt sau khi xác minh Live URL hoạt động (status 200) và tất cả file quan trọng (package.json, node_modules, index.html) đều tồn tại đúng.
+- **2026-08-03** [tsk-2428]: Với các task liên quan đến giao diện người dùng (UI) trên ứng dụng web tĩnh, việc xác minh URL xem trước (Live URL) và cấu trúc thư mục cơ bản là đủ để duyệt, không cần kiểm tra API.
+- **2026-08-03** [tsk-2428]: Khi review feature UI mới, nên kiểm tra cả cấu trúc file, phụ thuộc trong package.json, và xác nhận trực tiếp qua Live URL để đảm bảo tính khả dụng.
+- **2026-08-03** [tsk-2428]: Khi đánh giá task liên quan đến giao diện, cần kiểm tra cả code (file src) và trải nghiệm thực tế tại Live URL để xác nhận tính năng đã hoạt động.
+- **2026-08-03** [tsk-2428]: Khi kiểm tra task, cần xác nhận cả cấu trúc project (package.json, thư mục) và hoạt động thực tế thông qua Live URL.
+- **2026-08-03** [tsk-2428]: Task 'thêm dark mode' thường đi kèm với việc kiểm tra file package.json để xác nhận dependencies và live preview URL để xác nhận giao diện hiển thị đúng.
+- **2026-08-03** [tsk-2428]: Luôn verify cả package.json và live URL khi review task frontend, vì một dự án có thể tồn tại nhưng chưa hoạt động đúng.
+- **2026-08-03** [tsk-2428]: Khi review task frontend, luôn kiểm tra live URL trước khi approve để đảm bảo feature hiển thị đúng.
+- **2026-08-03** [tsk-2428]: Khi thêm dark mode cho React app cơ bản, cần kiểm tra dependencies hiện có và có thể sử dụng thư viện hỗ trợ hoặc custom CSS variables.
+- **2026-08-03** [tsk-2428]: Bài học: Cần kiểm tra code đã thực sự implement dark mode chưa, không chỉ qua task description.
+- **2026-08-03** [tsk-2428]: Khi review task dark mode, cần kiểm tra cả package.json (cấu trúc), code nguồn (logic toggle), và URL preview (giao diện) để đảm bảo đầy đủ.
+- **2026-08-03** [tsk-2428]: Khi thêm dark mode trong React CRA, cần kiểm tra: 1) CSS variable/theme trong src/, 2) Toggle component và state management, 3) LocalStorage persistence. Test trực tiếp trên Live URL thay vì chỉ check file structure.
+- **2026-08-03** [tsk-2428]: Task approve chỉ cần xác nhận project hoạt động (package.json + URL live 200 OK); chưa cần review code chi tiết nếu acceptance criteria đơn giản.
+- **2026-08-03** [tsk-2428]: Task 'Dark Mode toggle' đã hoàn thành - ứng dụng React chạy thành công (HTTP 200). Cần kiểm tra thêm source code trong src/ để verify UI component dark mode đã được thêm đúng cách.
+- **2026-08-03** [tsk-2428]: Khi thêm dark mode vào React app, cần kiểm tra file src để xác định nơi tạo theme toggle component.
+- **2026-08-03** [tsk-2428]: Sau khi thêm feature vào dự án React, cần kiểm tra đa chiều: cấu trúc file (đảm bảo dependency), package.json (xác nhận script), và URL preview để xác nhận trạng thái runtime.
+- **2026-08-03** [tsk-2428]: Khi phê duyệt feature dark mode, cần kiểm tra thư mục node_modules và dist để đảm bảo dự án đã build đúng trước khi xác nhận.

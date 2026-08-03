@@ -19,7 +19,7 @@ _DEFAULT = {
     "projects_root": "",
     # LLM tools: mỗi entry = 1 endpoint OpenAI-compatible (base_url + model + api_key)
     "llm_tools": [],
-    # Gán tool_id cho từng vai trò: planner | coder | critic | summary
+    # Gán tool_id cho từng vai trò: planner | coder | critic | summary | vision
     "role_models": {},
     # Git tokens cho private repo: [{"name", "host", "token"}]
     "git_tokens": [],
@@ -27,12 +27,13 @@ _DEFAULT = {
     "pending_clone": None,
 }
 
-ROLE_KEYS = ("planner", "coder", "critic", "summary")
+ROLE_KEYS = ("planner", "coder", "critic", "summary", "vision")
 ROLE_LABELS = {
     "planner": "Planner / Orchestrator",
     "coder": "Coding / Debug",
     "critic": "QA / Critic",
     "summary": "Summary / Memory",
+    "vision": "Vision / Image (chat đính kèm ảnh)",
 }
 AGENT_ROLE = {
     "conan": "planner",
@@ -298,7 +299,9 @@ def _seed_llm_from_env(data: dict) -> dict:
             t["enabled"] = True
             migrated = True
 
-    if tools and all(roles.get(r) for r in ROLE_KEYS):
+    # vision không bắt buộc seed — operator tự gán model hỗ trợ ảnh
+    _core_roles = tuple(r for r in ROLE_KEYS if r != "vision")
+    if tools and all(roles.get(r) for r in _core_roles):
         if migrated:
             data["llm_tools"] = tools
             save(data)
@@ -440,11 +443,17 @@ def _role_default_tool_id(role: str, tools: list[dict]) -> str:
         "coder": config.MODEL_CODER,
         "critic": config.MODEL_CRITIC,
         "summary": config.MODEL_SUMMARY,
+        "vision": config.MODEL_VISION,
     }
+    # Vision không có default free — không fallback sang model text
+    if role == "vision" and not defaults.get("vision"):
+        return ""
     target_model = defaults.get(role, "")
     matched = next((t["id"] for t in tools if t.get("model") == target_model and t.get("enabled", True)), "")
     if matched:
         return matched
+    if role == "vision":
+        return ""
     return next((t["id"] for t in tools if t.get("enabled", True)), "")
 
 
@@ -480,7 +489,7 @@ def set_role_model(role: str, tool_id: str) -> None:
     if tool_id and not tool:
         raise ValueError(f"llm tool không tồn tại: {tool_id}")
     if tool and not tool.get("enabled", True):
-        raise ValueError(f"model đang tắt — hãy bật lại trước khi gán vai trò")
+        raise ValueError("model đang tắt — hãy bật lại trước khi gán vai trò")
     data.setdefault("role_models", {})[role] = tool_id
     save(data)
 

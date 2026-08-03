@@ -7,17 +7,42 @@ import { openModal } from "./components/modal.js";
 
 export const API_BASE = (location.protocol === "file:" || !location.host) ? "http://127.0.0.1:8600" : "";
 
+let _boardLoading = false;
+let _boardQueued = false;
+let _boardTimer = null;
+
 export async function loadBoard() {
+  // Debounce + coalesce: WS bắn liên tục khi agent chạy — tránh xếp hàng request treo UI
+  if (_boardTimer) clearTimeout(_boardTimer);
+  _boardTimer = setTimeout(() => {
+    _boardTimer = null;
+    _loadBoardNow();
+  }, 150);
+}
+
+async function _loadBoardNow() {
+  if (_boardLoading) {
+    _boardQueued = true;
+    return;
+  }
+  _boardLoading = true;
   try {
     const res = await fetch(`${API_BASE}/api/board`);
     const data = await res.json();
     state.tasks.clear();
     data.tasks.forEach((t) => state.tasks.set(t.id, t));
-    await loadProjects();
-    await loadSettings();
     renderBoard();
+    renderSidebar();
+    // Settings không chặn board; projects load riêng
+    loadSettings();
   } catch (e) {
     console.error("Failed to load board:", e);
+  } finally {
+    _boardLoading = false;
+    if (_boardQueued) {
+      _boardQueued = false;
+      _loadBoardNow();
+    }
   }
 }
 
@@ -64,6 +89,7 @@ export async function selectProject(slug) {
     console.error("Failed to select project:", e);
   }
   updateFooterProject();
+  renderSidebar();
   renderBoard();
 }
 

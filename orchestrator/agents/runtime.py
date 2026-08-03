@@ -98,6 +98,8 @@ async def run_agent(
             })
 
     # hết quota vòng lặp — ép tổng kết lần cuối, KHÔNG cho dùng tool nữa
+    # Marker cố định do CODE gắn (không phải LLM) — scheduler check startswith, tránh false positive.
+    ITERATION_LIMIT_MARKER = "[ITERATION_LIMIT_REACHED]"
     store.add_event(
         task.id, "system", "system",
         f"{agent_name} chạm giới hạn {max_iterations} vòng tool-calling — ép tổng kết cuối.",
@@ -117,7 +119,7 @@ async def run_agent(
         )  # không truyền tools
         final = (final_msg.get("content") or "").strip()
         if final:
-            return final
+            return f"{ITERATION_LIMIT_MARKER} {final}"
     except llm.LLMError:
         log.exception("Final summary call failed for %s/%s", agent_name, task.id)
-    return "(agent dừng do chạm giới hạn vòng lặp — công việc có thể chưa hoàn tất)"
+    return f"{ITERATION_LIMIT_MARKER} (agent dừng do chạm giới hạn vòng lặp — công việc có thể chưa hoàn tất)"

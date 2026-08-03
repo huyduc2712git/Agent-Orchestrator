@@ -31,9 +31,24 @@ export function formatMarkdownMessage(text) {
 
   let html = escapeHtml(text);
 
+  // Ảnh upload (/uploads/...) → thumbnail, không hiện raw link
+  html = html.replace(
+    /(?:🖼\s*)?(https?:\/\/[^\s<&]+\/uploads\/[^\s<&]+|\/uploads\/[^\s<&]+)/gi,
+    (_full, url) => {
+      const src = url;
+      return (
+        `<a href="${src}" target="_blank" rel="noopener" class="chat-img-link" title="Mở ảnh gốc">` +
+        `<img src="${src}" alt="Ảnh đính kèm" class="chat-attach-thumb" loading="lazy" />` +
+        `</a>`
+      );
+    }
+  );
+
   html = html.replace(
     /(https?:\/\/[^\s<]+)/gi,
     (url) => {
+      // đã render thành <img> ở trên — bỏ qua URL nằm trong src/href ảnh
+      if (/\/uploads\//i.test(url)) return url;
       let href = url;
       const m = href.match(/^(https?:\/\/[^/]+\/preview\/[a-z0-9_-]+)\/?$/i);
       if (m) href = m[1] + "/";
@@ -251,12 +266,60 @@ export function resetChatInputHeight() {
   ta.style.height = "auto";
 }
 
+/** Ảnh chờ gửi trong composer — chọn xong chưa upload cho đến khi bấm Gửi. */
+let _pendingImage = null; // { file, previewUrl, name }
+
+export function hasPendingImage() {
+  return !!_pendingImage?.file;
+}
+
+export function clearPendingImage() {
+  if (_pendingImage?.previewUrl) {
+    try {
+      URL.revokeObjectURL(_pendingImage.previewUrl);
+    } catch (_) {}
+  }
+  _pendingImage = null;
+  const wrap = $("chat-image-preview");
+  const img = $("chat-image-preview-img");
+  const name = $("chat-image-preview-name");
+  if (img) img.removeAttribute("src");
+  if (name) name.textContent = "";
+  wrap?.classList.add("hidden");
+}
+
+function showPendingImage(file) {
+  clearPendingImage();
+  if (!file) return;
+  const previewUrl = URL.createObjectURL(file);
+  _pendingImage = { file, previewUrl, name: file.name || "image" };
+  const wrap = $("chat-image-preview");
+  const img = $("chat-image-preview-img");
+  const name = $("chat-image-preview-name");
+  if (img) img.src = previewUrl;
+  if (name) name.textContent = _pendingImage.name;
+  wrap?.classList.remove("hidden");
+}
+
 export async function sendChatMessage(text) {
-  if (!text) return;
+  const msg = (text || "").trim();
+  if (!msg && !hasPendingImage()) return;
   if (!state.activeProject) {
     openNewProject("Chọn hoặc tạo project trước khi gửi task.");
     return;
   }
+
+  // Có ảnh đính kèm → upload + vision; không có → chat text thường
+  if (hasPendingImage()) {
+    const file = _pendingImage.file;
+    clearPendingImage();
+    const ta = $("chat-text");
+    if (ta) ta.value = "";
+    resetChatInputHeight();
+    await sendChatImage(file, msg);
+    return;
+  }
+
   const ta = $("chat-text");
   if (ta) ta.value = "";
   resetChatInputHeight();
@@ -268,10 +331,63 @@ export async function sendChatMessage(text) {
     await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: text, project: state.activeProject || "" }),
+      body: JSON.stringify({ message: msg, project: state.activeProject || "" }),
     });
   } finally {
     if (sendBtn) sendBtn.disabled = false;
     if (ta) ta.focus();
   }
+}
+
+export async function sendChatImage(file, message) {
+  if (!file) return;
+  if (!state.activeProject) {
+    openNewProject("Chọn hoặc tạo project trước khi gửi ảnh.");
+    return;
+  }
+  const sendBtn = $("chat-send");
+  if (sendBtn) sendBtn.disabled = true;
+  state.workStartedAt = Date.now();
+  setThinking(true);
+  try {
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("message", message || "");
+    fd.append("project", state.activeProject || "");
+    const res = await fetch("/api/chat/upload-image", { method: "POST", body: fd });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      alert(data.error || `Upload ảnh thất bại (HTTP ${res.status})`);
+      setThinking(false);
+    }
+  } catch (e) {
+    alert("Upload ảnh lỗi: " + e);
+    setThinking(false);
+  } finally {
+    if (sendBtn) sendBtn.disabled = false;
+    $("chat-text")?.focus();
+  }
+}
+
+export function initChatImageAttach() {
+  const input = $("chat-image-input");
+  const btn = $("chat-attach-btn");
+  if (!input || !btn) return;
+  btn.addEventListener("click", () => input.click());
+  input.addEventListener("change", () => {
+    const file = input.files && input.files[0];
+    input.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      alert("Chỉ chọn file ảnh (png/jpg/webp/gif).");
+      return;
+    }
+    // Chỉ gắn vào composer — chưa gửi lên server
+    showPendingImage(file);
+    $("chat-text")?.focus();
+  });
+  $("chat-image-preview-remove")?.addEventListener("click", () => {
+    clearPendingImage();
+    $("chat-text")?.focus();
+  });
 }

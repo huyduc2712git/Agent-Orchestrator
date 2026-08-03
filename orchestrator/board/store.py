@@ -15,8 +15,15 @@ _conn: sqlite3.Connection | None = None
 def _db() -> sqlite3.Connection:
     global _conn
     if _conn is None:
-        _conn = sqlite3.connect(config.DB_PATH, check_same_thread=False)
+        # timeout: chờ lock thay vì fail ngay khi tool thread đang ghi
+        _conn = sqlite3.connect(config.DB_PATH, check_same_thread=False, timeout=30)
         _conn.row_factory = sqlite3.Row
+        try:
+            _conn.execute("PRAGMA journal_mode=WAL")
+            _conn.execute("PRAGMA busy_timeout=30000")
+            _conn.execute("PRAGMA synchronous=NORMAL")
+        except sqlite3.Error:
+            pass
         _init_schema(_conn)
     return _conn
 
@@ -72,15 +79,16 @@ def _init_schema(c: sqlite3.Connection) -> None:
 
 
 def _next_id(prefix: str = "tsk") -> str:
-    c = _db()
-    existing = {row[0] for row in c.execute("SELECT id FROM tasks").fetchall()}
-    for _ in range(100):
-        num = random.randint(1000, 9999)
-        new_id = f"{prefix}-{num}"
-        if new_id not in existing:
-            return new_id
-    # Fallback an toàn tuyệt đối nếu dải 4 số bị đầy
-    return f"{prefix}-{random.randint(10000, 99999)}"
+    with _lock:
+        c = _db()
+        existing = {row[0] for row in c.execute("SELECT id FROM tasks").fetchall()}
+        for _ in range(100):
+            num = random.randint(1000, 9999)
+            new_id = f"{prefix}-{num}"
+            if new_id not in existing:
+                return new_id
+        # Fallback an toàn tuyệt đối nếu dải 4 số bị đầy
+        return f"{prefix}-{random.randint(10000, 99999)}"
 
 
 def _row_to_task(row: sqlite3.Row) -> Task:
@@ -157,8 +165,10 @@ def create_task(
 
 
 def get_task(task_id: str) -> Task | None:
-    row = _db().execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
-    return _row_to_task(row) if row else None
+    # Connection dùng chung giữa event-loop + tool threads → mọi truy cập phải qua _lock
+    with _lock:
+        row = _db().execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        return _row_to_task(row) if row else None
 
 
 def list_tasks(
@@ -185,8 +195,9 @@ def list_tasks(
         q += " AND type = ?"
         args.append(type)
     q += " ORDER BY created_at"
-    rows = _db().execute(q, args).fetchall()
-    return [_row_to_task(r) for r in rows]
+    with _lock:
+        rows = _db().execute(q, args).fetchall()
+        return [_row_to_task(r) for r in rows]
 
 
 def update_task_fields(task_id: str, **fields) -> Task | None:
@@ -262,12 +273,13 @@ def archive_task(task_id: str, actor: str = "operator") -> TransitionResult:
 
 def search_tasks(query: str, limit: int = 5) -> list[Task]:
     like = f"%{query}%"
-    rows = _db().execute(
-        "SELECT * FROM tasks WHERE title LIKE ? OR description LIKE ? "
-        "ORDER BY created_at DESC LIMIT ?",
-        (like, like, limit),
-    ).fetchall()
-    return [_row_to_task(r) for r in rows]
+    with _lock:
+        rows = _db().execute(
+            "SELECT * FROM tasks WHERE title LIKE ? OR description LIKE ? "
+            "ORDER BY created_at DESC LIMIT ?",
+            (like, like, limit),
+        ).fetchall()
+        return [_row_to_task(r) for r in rows]
 
 
 # ---------- Dependencies ----------
@@ -281,8 +293,9 @@ def add_dep(task_id: str, depends_on: str, dep_type: str = "blocks") -> None:
 
 
 def get_deps(task_id: str) -> list[dict]:
-    rows = _db().execute("SELECT * FROM deps WHERE task_id = ?", (task_id,)).fetchall()
-    return [dict(r) for r in rows]
+    with _lock:
+        rows = _db().execute("SELECT * FROM deps WHERE task_id = ?", (task_id,)).fetchall()
+        return [dict(r) for r in rows]
 
 
 def deps_satisfied(task_id: str) -> bool:
@@ -314,14 +327,17 @@ def add_event(task_id: str, agent: str, kind: str, message: str) -> Event:
 
 
 def list_events(task_id: str | None = None, limit: int = 200) -> list[Event]:
-    if task_id:
-        rows = _db().execute(
-            "SELECT * FROM events WHERE task_id = ? ORDER BY id LIMIT ?",
-            (task_id, limit),
-        ).fetchall()
-    else:
-        rows = _db().execute("SELECT * FROM events ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
-    return [Event(**dict(r)) for r in rows]
+    with _lock:
+        if task_id:
+            rows = _db().execute(
+                "SELECT * FROM events WHERE task_id = ? ORDER BY id LIMIT ?",
+                (task_id, limit),
+            ).fetchall()
+        else:
+            rows = _db().execute(
+                "SELECT * FROM events ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [Event(**dict(r)) for r in rows]
 
 
 # ---------- Chat ----------
@@ -341,7 +357,8 @@ def add_chat(role: str, message: str) -> dict:
 
 
 def list_chat(limit: int = 100) -> list[dict]:
-    rows = _db().execute(
-        "SELECT * FROM chat ORDER BY id DESC LIMIT ?", (limit,)
-    ).fetchall()
-    return [dict(r) for r in reversed(rows)]
+    with _lock:
+        rows = _db().execute(
+            "SELECT * FROM chat ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [dict(r) for r in reversed(rows)]

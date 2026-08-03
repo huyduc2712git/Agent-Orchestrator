@@ -1,5 +1,4 @@
 """Bộ tool thực thi thật cho agent: file, command, search, http, figma, board."""
-import json
 import logging
 import os
 import re

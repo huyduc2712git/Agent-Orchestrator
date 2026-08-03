@@ -43,10 +43,19 @@ async def operator_git_push(task_id: str, body: GitPushIn | None = None):
         add_res = await asyncio.to_thread(
             subprocess.run, ["git", "add", "."], cwd=project_dir, capture_output=True, text=True, check=False
         )
+        if add_res.returncode != 0:
+            err = ((add_res.stdout or "") + "\n" + (add_res.stderr or "")).strip()
+            store.add_event(task.id, "operator", "system", f"Git add thất bại:\n{err[:500]}")
+            return JSONResponse({"error": f"Git add thất bại: {err}"}, status_code=500)
 
         commit_res = await asyncio.to_thread(
             subprocess.run, ["git", "commit", "-m", commit_msg], cwd=project_dir, capture_output=True, text=True, check=False
         )
+        commit_out = ((commit_res.stdout or "") + "\n" + (commit_res.stderr or "")).strip()
+        nothing_to_commit = "nothing to commit" in commit_out.lower()
+        if commit_res.returncode != 0 and not nothing_to_commit:
+            store.add_event(task.id, "operator", "system", f"Git commit thất bại:\n{commit_out[:500]}")
+            return JSONResponse({"error": f"Git commit thất bại: {commit_out}"}, status_code=500)
 
         push_res = await asyncio.to_thread(
             subprocess.run, ["git", "push"], cwd=project_dir, capture_output=True, text=True, check=False

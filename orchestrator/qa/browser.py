@@ -1,7 +1,6 @@
 """Headless browser: chụp screenshot live + kiểm tra CSS/render/console."""
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 from typing import Any

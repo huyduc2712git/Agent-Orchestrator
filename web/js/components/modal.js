@@ -431,17 +431,18 @@ export async function openModal(taskId) {
     const children = (apiSubs.length
       ? apiSubs
       : [...state.tasks.values()].filter((c) => c.parent_id === t.id)
-    ).slice().sort((a, b) => String(a.id).localeCompare(String(b.id)));
+    ).slice().sort((a, b) => {
+      // Thứ tự kế hoạch: created_at (không sort theo id — sqa-* sẽ nhảy lên trước sub-*)
+      const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return ta === tb ? String(a.id).localeCompare(String(b.id)) : ta - tb;
+    });
     const work = children.filter((c) => c.type !== "bug");
     const bugs = children.filter((c) => c.type === "bug");
 
     const rowHtml = (list, kind) => list.map((sub, i) => {
-      let agentName = sub.assignee || "kid";
-      if (sub.status === "testing" && agentName !== "heiji") {
-        agentName = "heiji";
-      } else if (sub.status === "review" && agentName !== "conan" && agentName !== "haibara") {
-        agentName = "haibara";
-      }
+      // Hiện đúng assignee trên board — không đổi kid→heiji chỉ vì status=testing
+      const agentName = sub.assignee || "kid";
       const iconHtml = getAgentIconHtml(agentName.toLowerCase());
       const { statusText, subCls } = childStatusMeta(sub.status);
       const label = sub.id ? sub.id : (kind === "bug" ? `Bug #${i + 1}` : `Subtask #${i + 1}`);
@@ -459,7 +460,8 @@ export async function openModal(taskId) {
     if (work.length || bugs.length) {
       let body = "";
       if (work.length) {
-        const completed = work.filter((c) => c.status === "done" || c.status === "testing" || c.status === "review").length;
+        // testing = đang/ chờ QA — chưa tính "hoàn tất"
+        const completed = work.filter((c) => c.status === "done").length;
         const pct = Math.round((completed / work.length) * 100);
         const hasOpenBugs = bugs.some((b) => b.status !== "done" && b.status !== "archived");
         const pStyle = getProgressStyle(pct, hasOpenBugs);

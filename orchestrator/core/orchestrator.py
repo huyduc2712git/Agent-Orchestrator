@@ -4,9 +4,12 @@ Phase 1: Tiếp nhận (chat) -> Phase 2: Phân tích & lập kế hoạch (chia
 -> Phase 3: Phân công (scheduler chạy agent) -> Phase 4: Theo dõi (event bus, không chờ)
 -> Phase 5: QA + closure (verify độc lập) -> Phase 6: Ghi nhớ (memory + wiki).
 """
+import base64
 import json
 import logging
+import mimetypes
 import re
+from pathlib import Path
 
 from .. import config, llm
 from .. import git_ops
@@ -81,9 +84,10 @@ Quy tắc lập kế hoạch:
   (5) smoke: http_get Live URL UI = 200 VÀ http_get API trực tiếp (:3000…) VÀ http_get
       cùng path /api/... trên host Live URL (same-origin trình duyệt).
   UI đẹp / backend direct OK mà preview host /api 404 = CHƯA XONG — plan phải cover proxy/api_base hoặc bugfix.
-- KHÔNG CẦN tạo subtask QA riêng ("QA verify...") cho Heiji, vì QA đã là QUY TRÌNH TỰ ĐỘNG CÓ SẴN của hệ thống (khi Kid/Agasa làm xong, task sẽ tự động chuyển sang In Testing / QA để Heiji vào test).
-- Security (Akai) và Pentest (Amuro) cũng được hệ thống tự tạo SAU khi QA PASS — KHÔNG tạo subtask akai/amuro trong plan ban đầu.
-- Chỉ tạo subtask cho các công việc phát triển thật (Kid code UI/Scaffolding, Agasa làm Backend/API/Data). Subtask nhỏ 1 bước -> 1 subtask. Task phức tạp -> chia subtask chain.
+- CẤM tạo subtask QA/Review riêng cho Heiji/Haibara ("Kiểm tra chất lượng", "QA verify", "đảm bảo chất lượng"…).
+  QA là QUY TRÌNH TỰ ĐỘNG: khi Kid/Agasa xong → hệ thống đưa sang Testing → Heiji test. Plan chỉ gồm subtask BUILD.
+- Security (Akai) và Pentest (Amuro) cũng được hệ thống tự tạo SAU khi QA PASS — CẤM tạo subtask akai/amuro/heiji/haibara trong plan.
+- Chỉ tạo subtask phát triển thật: Kid (UI/scaffold/frontend), Agasa (backend/API/data). Thứ tự: scaffold → build → integrate (dependency đúng).
 - Mô tả subtask phải đầy đủ context (steer message). Tuân thủ hướng dẫn Build/QA trong Link context ở trên (đưa nguyên văn URL, tags).
 - Việc liên quan DB migration / security / deploy production: thêm tag tương ứng ("db-migration", "security", "deploy-prod") để hệ thống bắt buộc operator review.
 - Trả lời người dùng ngay trong "reply" — không để họ chờ trong im lặng.
@@ -150,6 +154,49 @@ def _slug(text: str) -> str:
     return s[:40] or "project"
 
 
+_CRITIC_PLAN_AGENTS = frozenset({"heiji", "haibara", "akai", "amuro", "conan"})
+_QA_TITLE_MARKERS = (
+    "kiểm tra và đảm bảo chất lượng",
+    "kiểm tra chất lượng",
+    "đảm bảo chất lượng",
+    "qa verify",
+    "visual qa",
+    "quality assurance",
+    "kiểm thử",
+)
+
+
+def _filter_build_only_subtasks(subtasks_info: list) -> list:
+    """Loại subtask QA/Security khỏi plan — QA/Akai/Amuro do hệ thống tự chạy sau build."""
+    if not subtasks_info:
+        return []
+    keep_old: list[int] = []
+    for i, st in enumerate(subtasks_info):
+        agent = (st.get("agent") or "kid").lower().strip()
+        title = (st.get("title") or "").lower()
+        if agent in _CRITIC_PLAN_AGENTS:
+            continue
+        if any(m in title for m in _QA_TITLE_MARKERS):
+            continue
+        keep_old.append(i)
+    if not keep_old:
+        return []
+    old_to_new = {old: new for new, old in enumerate(keep_old)}
+    out: list[dict] = []
+    for old in keep_old:
+        st = dict(subtasks_info[old])
+        agent = (st.get("agent") or "kid").lower().strip()
+        if agent not in WORKER_KEYS or agent in _CRITIC_PLAN_AGENTS:
+            st["agent"] = "kid"
+        deps = []
+        for d in st.get("depends_on") or []:
+            if isinstance(d, int) and d in old_to_new:
+                deps.append(old_to_new[d])
+        st["depends_on"] = deps
+        out.append(st)
+    return out
+
+
 async def _fallback_plain_reply(user_message: str, history_text: str, planner: dict) -> bool:
     """Planner hỏng JSON — vẫn trả lời người dùng bằng text thường. True nếu đã reply."""
     prompt = (
@@ -179,13 +226,158 @@ async def _fallback_plain_reply(user_message: str, history_text: str, planner: d
     return True
 
 
+def _prepare_vision_data_url(path: Path) -> tuple[str, str]:
+    """Nén/resize ảnh trước khi gửi vision API — tránh HTTP 413 Payload Too Large.
+
+    Trả về (data_url, mime). Giữ file gốc trên đĩa (preview chat); chỉ nén bản gửi LLM.
+    """
+    from io import BytesIO
+
+    from PIL import Image
+
+    raw = path.read_bytes()
+    mime = mimetypes.guess_type(str(path))[0] or "image/png"
+    img = Image.open(BytesIO(raw))
+    w0, h0 = img.size
+    # Ảnh nhỏ sẵn thì khỏi nén
+    if len(raw) <= config.VISION_IMAGE_MAX_BYTES and max(w0, h0) <= config.VISION_IMAGE_MAX_SIDE:
+        return f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}", mime
+
+    if img.mode in ("RGBA", "P", "LA"):
+        img = img.convert("RGB")
+    elif img.mode != "RGB":
+        img = img.convert("RGB")
+
+    max_side = config.VISION_IMAGE_MAX_SIDE
+    w, h = img.size
+    if max(w, h) > max_side:
+        scale = max_side / float(max(w, h))
+        img = img.resize((max(1, int(w * scale)), max(1, int(h * scale))), Image.Resampling.LANCZOS)
+
+    quality = config.VISION_IMAGE_JPEG_QUALITY
+    out = BytesIO()
+    img.save(out, format="JPEG", quality=quality, optimize=True)
+    data = out.getvalue()
+    while len(data) > config.VISION_IMAGE_MAX_BYTES and quality > 45:
+        quality -= 10
+        out = BytesIO()
+        img.save(out, format="JPEG", quality=quality, optimize=True)
+        data = out.getvalue()
+
+    log.info(
+        "Vision image compressed: %s %dx%d %sB → jpeg q=%s %sB",
+        path.name, w0, h0, len(raw), quality, len(data),
+    )
+    b64 = base64.b64encode(data).decode("ascii")
+    return f"data:image/jpeg;base64,{b64}", "image/jpeg"
+
+
+async def analyze_image_and_chat(
+    message: str,
+    image_path: str,
+    project: str | None = None,
+) -> None:
+    """Đọc ảnh bằng model vision → ghép mô tả text → gọi handle_chat như tin thường.
+
+    Không fallback ngầm sang model text nếu chưa cấu hình role vision / MODEL_VISION.
+    """
+    roles = app_settings.role_models()
+    path = Path(image_path)
+    if not path.is_file():
+        store.add_chat("conan", f"Không tìm thấy file ảnh: `{image_path}`")
+        return
+
+    # Ưu tiên role Vision; nếu chưa gán thì dùng MODEL_VISION env; cuối cùng fallback Planner
+    # (nhiều model multimodal như llama-4-scout được gán Planner nhưng quên gán Vision).
+    used_fallback = False
+    if roles.get("vision"):
+        vision = app_settings.resolve_llm(role="vision")
+    elif config.MODEL_VISION:
+        vision = {
+            "model": config.MODEL_VISION,
+            "base_url": config.LLM_BASE_URL,
+            "api_key": config.LLM_API_KEY,
+            "name": config.MODEL_VISION,
+        }
+    elif roles.get("planner"):
+        vision = app_settings.resolve_llm(role="planner")
+        used_fallback = True
+    else:
+        store.add_chat(
+            "conan",
+            "Chưa cấu hình model đọc ảnh (role **Vision**) trong Settings. "
+            "Gán một model hỗ trợ ảnh (vd llama-4-scout, GPT-4o, Gemini) rồi thử lại.",
+        )
+        return
+
+    if used_fallback:
+        log.info(
+            "Vision role chưa gán — dùng tạm model Planner `%s` để đọc ảnh",
+            vision.get("name") or vision.get("model"),
+        )
+
+    mime_guess = mimetypes.guess_type(str(path))[0] or "image/png"
+    if not mime_guess.startswith("image/"):
+        store.add_chat("conan", f"File không phải ảnh hợp lệ (`{mime_guess}`).")
+        return
+
+    try:
+        data_url, _mime = _prepare_vision_data_url(path)
+    except Exception as e:
+        log.exception("Vision image prepare failed")
+        store.add_chat("conan", f"Không xử lý được ảnh trước khi gửi model: {e}")
+        return
+
+    user_text = (message or "").strip() or "Hãy mô tả ảnh này và đề xuất việc cần làm."
+
+    prompt_blocks = [
+        {
+            "type": "text",
+            "text": (
+                "Bạn là trợ lý vision cho Conan (orchestrator). "
+                "Mô tả ảnh bằng tiếng Việt, ngắn gọn, đủ chi tiết để lập kế hoạch làm việc "
+                "(UI elements, layout, lỗi nhìn thấy, text trên ảnh nếu có). "
+                "Không bịa chi tiết không có trong ảnh.\n\n"
+                f"Yêu cầu kèm theo của người dùng: {user_text}"
+            ),
+        },
+        {"type": "image_url", "image_url": {"url": data_url}},
+    ]
+
+    try:
+        msg = await llm.chat(
+            [{"role": "user", "content": prompt_blocks}],
+            model=vision["model"],
+            base_url=vision["base_url"],
+            api_key=vision["api_key"],
+        )
+        description = (msg.get("content") or "").strip()
+    except llm.LLMError as e:
+        log.exception("Vision model failed")
+        store.add_chat("conan", f"Gọi model đọc ảnh thất bại: {e}")
+        return
+    except Exception as e:
+        log.exception("Vision analyze crashed")
+        store.add_chat("conan", f"Gọi model đọc ảnh thất bại: {e}")
+        return
+
+    if not description:
+        store.add_chat("conan", "Model đọc ảnh trả về rỗng — thử model vision khác trong Settings.")
+        return
+
+    enriched = (
+        f"{user_text}\n\n"
+        f"[Mô tả từ ảnh đính kèm — model `{vision.get('name') or vision['model']}`]\n"
+        f"{description}"
+    )
+    await handle_chat(enriched, project=project)
+
+
 async def handle_chat(user_message: str, project: str | None = None) -> None:
     """Phase 1 + 2: tiếp nhận, phân tích, lập kế hoạch, trả lời ngay.
 
     `project`: slug project đang chọn trên UI — task mới buộc gắn vào đây.
     """
-    from pathlib import Path
-
     from ..paths import (
         extract_target_dir,
         is_under_orchestrator,
@@ -321,6 +513,16 @@ async def handle_chat(user_message: str, project: str | None = None) -> None:
     subtasks_info = decision.get("subtasks", [])
     if not tinfo.get("title") or not subtasks_info:
         store.add_chat("conan", decision.get("reply") or "Tôi chưa đủ thông tin để lập kế hoạch — bạn mô tả rõ hơn được không?")
+        return
+
+    # Cứng: loại subtask QA/Security khỏi plan — hệ thống tự chạy sau khi build xong
+    subtasks_info = _filter_build_only_subtasks(subtasks_info)
+    if not subtasks_info:
+        store.add_chat(
+            "conan",
+            decision.get("reply")
+            or "Kế hoạch chỉ toàn bước QA/review — cần ít nhất một subtask build (Kid/Agasa). Bạn mô tả lại yêu cầu?",
+        )
         return
 
     # Ưu tiên project đang chọn trên UI; không tạo project mới mỗi lần chat
@@ -853,21 +1055,37 @@ async def check_parent_progress(parent_id: str) -> None:
         store.set_status(parent.id, "blocked", "conan")
         parent.status = "blocked"
 
-    # Tự động gỡ blocked cho parent khi không còn subtask nào bị blocked
-    if parent.status == "blocked" and not has_blocked:
-        # Xác định trạng thái phù hợp dựa vào tiến trình subtask
-        if has_coder_working:
-            new_st = "in_progress"
-        elif has_testing:
-            new_st = "testing"
-        else:
-            new_st = "testing"
-        store.set_status(parent.id, new_st, "conan")
-        parent.status = new_st
-        log.info("Auto-unblock: %s không còn subtask blocked — chuyển về %s", parent.id, new_st)
+    # Tự động gỡ blocked cho parent khi không còn subtask blocked (trừ khi Operator chủ động block)
+    if parent.status == "blocked":
+        parent_events = store.list_events(parent.id)
+        operator_blocked = any(
+            e.agent == "operator"
+            and ("blocked" in e.message.lower() or "dừng" in e.message.lower())
+            for e in parent_events[-15:]
+        )
+        if operator_blocked:
+            # Operator block → giữ blocked, không spam chat / không chạy closure
+            for st in subtasks:
+                if st.status not in ("done", "archived", "blocked"):
+                    try:
+                        store.set_status(st.id, "blocked", "operator")
+                    except Exception:
+                        pass
+            return
 
-    # Parent đang failed → giữ nguyên chờ can thiệp
-    if parent.status == "failed":
+        if not has_blocked:
+            if has_coder_working:
+                new_st = "in_progress"
+            elif has_testing:
+                new_st = "testing"
+            else:
+                new_st = "testing"
+            store.set_status(parent.id, new_st, "conan")
+            parent.status = new_st
+            log.info("Auto-unblock: %s không còn subtask blocked — chuyển về %s", parent.id, new_st)
+
+    # Parent đang blocked hoặc failed → giữ nguyên chờ can thiệp (không spam chat)
+    if parent.status in ("blocked", "failed"):
         return
 
     # 2. Nếu còn subtask ở backlog, in_progress, hoặc blocked -> chưa đủ điều kiện closure

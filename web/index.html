@@ -9,13 +9,50 @@
       type="image/svg+xml"
       href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' rx='115' fill='%23843BFF'/><path d='M 135,360 C 115,250 150,100 260,100 C 370,100 400,180 395,250 C 400,260 430,265 460,270 C 490,275 480,320 455,315 C 420,310 400,310 385,330 C 375,365 360,390 340,405 C 315,415 295,390 280,390 C 265,390 245,425 220,415 C 195,405 185,375 170,380 C 155,385 125,400 135,360 Z' fill='%23FFFFFF'/><ellipse cx='265' cy='215' rx='17' ry='26' fill='%23000000'/><ellipse cx='335' cy='215' rx='17' ry='26' fill='%23000000'/></svg>"
     />
-    <link rel="stylesheet" href="/static/styles.css?v=71" />
+    <link rel="stylesheet" href="/static/styles.css?v=80" />
+    <!-- Ép Chrome nạp lại cả module graph (api.js/sidebar.js…) — Clear site data KHÔNG xóa HTTP cache module -->
+    <script type="importmap">
+      {
+        "imports": {
+          "/static/js/main.js": "/static/js/main.js?v=80",
+          "/static/js/api.js": "/static/js/api.js?v=80",
+          "/static/js/state.js": "/static/js/state.js?v=80",
+          "/static/js/constants.js": "/static/js/constants.js?v=80",
+          "/static/js/components/board.js": "/static/js/components/board.js?v=80",
+          "/static/js/components/sidebar.js": "/static/js/components/sidebar.js?v=80",
+          "/static/js/components/modal.js": "/static/js/components/modal.js?v=80",
+          "/static/js/components/chat.js": "/static/js/components/chat.js?v=80",
+          "/static/js/components/settings.js": "/static/js/components/settings.js?v=80"
+        }
+      }
+    </script>
   </head>
   <body class="view-board-active">
+    <div
+      id="boot-error"
+      hidden
+      style="
+        position: fixed;
+        z-index: 99999;
+        left: 12px;
+        right: 12px;
+        top: 12px;
+        padding: 12px 14px;
+        border-radius: 10px;
+        background: #3f1d1d;
+        border: 1px solid #ef4444;
+        color: #fecaca;
+        font: 13px/1.45 ui-sans-serif, system-ui, sans-serif;
+      "
+    ></div>
     <div class="app-shell">
       <!-- ===== SIDEBAR (luôn hiện — giống ảnh mẫu) ===== -->
       <aside class="app-sidebar">
-        <div class="sidebar-brand" id="brand-toggle-btn" title="Nhấp để đóng/mở Sidebar">
+        <div
+          class="sidebar-brand"
+          id="brand-toggle-btn"
+          title="Nhấp để đóng/mở Sidebar"
+        >
           <span class="brand-logo">
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -85,7 +122,11 @@
         </div>
 
         <div class="sidebar-footer">
-          <button class="sidebar-settings" id="sidebar-settings-btn" title="Settings">
+          <button
+            class="sidebar-settings"
+            id="sidebar-settings-btn"
+            title="Settings"
+          >
             <svg
               width="16"
               height="16"
@@ -96,8 +137,10 @@
               stroke-linecap="round"
               stroke-linejoin="round"
             >
-              <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
-              <circle cx="12" cy="12" r="3"/>
+              <path
+                d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
+              />
+              <circle cx="12" cy="12" r="3" />
             </svg>
             <span class="settings-label">Settings</span>
           </button>
@@ -162,9 +205,16 @@
           <div class="chat-shell">
             <header class="chat-header">
               <div class="chat-agent">
-                <span class="avatar avatar-conan"><img src="/static/avatar_agent/Conan.png" alt="Conan" class="avatar-img" /></span>
+                <span class="avatar avatar-conan"
+                  ><img
+                    src="/static/avatar_agent/Conan.png"
+                    alt="Conan"
+                    class="avatar-img"
+                /></span>
                 <div>
-                  <div class="chat-agent-name">Conan (Squad Lead / Orchestrator)</div>
+                  <div class="chat-agent-name">
+                    Conan (Squad Lead / Orchestrator)
+                  </div>
                   <div class="chat-agent-role">Orchestrator AI Agent</div>
                 </div>
               </div>
@@ -173,17 +223,36 @@
             <div class="chat-messages" id="chat-messages"></div>
 
             <form class="chat-composer" id="chat-form">
+              <div class="composer-attach-preview hidden" id="chat-image-preview">
+                <img id="chat-image-preview-img" alt="Ảnh đính kèm" />
+                <span class="composer-attach-name" id="chat-image-preview-name"></span>
+                <button
+                  type="button"
+                  class="composer-attach-remove"
+                  id="chat-image-preview-remove"
+                  title="Bỏ ảnh"
+                >
+                  ×
+                </button>
+              </div>
               <textarea
                 id="chat-text"
                 rows="2"
-                placeholder="Nhập tin nhắn giao việc cho Conan... (Press Enter to send, Shift+Enter for newline)"
+                placeholder="Nhập tin nhắn giao việc cho Conan... (đính ảnh bằng nút ghim, rồi Gửi)"
               ></textarea>
               <div class="composer-toolbar">
                 <div class="toolbar-left">
+                  <input
+                    type="file"
+                    id="chat-image-input"
+                    accept="image/png,image/jpeg,image/webp,image/gif"
+                    class="hidden"
+                  />
                   <button
                     type="button"
                     class="icon-btn-ghost"
-                    title="Attach file"
+                    id="chat-attach-btn"
+                    title="Đính kèm ảnh (vision)"
                   >
                     <svg
                       width="15"
@@ -202,7 +271,10 @@
                     >Model: <strong id="chat-model-name">—</strong></span
                   >
                   <span class="model-pill" id="chat-project-pill"
-                    >Project: <strong id="chat-project-name" style="color: #60a5fa;">— chưa chọn</strong></span
+                    >Project:
+                    <strong id="chat-project-name" style="color: #60a5fa"
+                      >— chưa chọn</strong
+                    ></span
                   >
                 </div>
                 <div class="toolbar-right">
@@ -256,9 +328,22 @@
 
         <!-- Sticky scroll controls inside Task Detail Modal (Bottom Right) -->
         <div class="modal-scroll-controls" id="modal-scroll-controls">
-          <button type="button" class="modal-scroll-btn" id="modal-scroll-toggle" title="Cuộn lên / Cuộn xuống">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="14" height="14" fill="currentColor">
-              <path d="M470.6 566.6L566.6 470.6C575.8 461.4 578.5 447.7 573.5 435.7C568.5 423.7 556.9 416 544 416L480 416L480 96C480 78.3 465.7 64 448 64C430.3 64 416 78.3 416 96L416 416L352 416C339.1 416 327.4 423.8 322.4 435.8C317.4 447.8 320.2 461.5 329.3 470.7L425.3 566.7C437.8 579.2 458.1 579.2 470.6 566.7zM214.6 73.4C202.1 60.9 181.8 60.9 169.3 73.4L73.3 169.4C64.1 178.6 61.4 192.3 66.4 204.3C71.4 216.3 83.1 224 96 224L160 224L160 544C160 561.7 174.3 576 192 576C209.7 576 224 561.7 224 544L224 224L288 224C300.9 224 312.6 216.2 317.6 204.2C322.6 192.2 319.8 178.5 310.7 169.3L214.7 73.3z"/>
+          <button
+            type="button"
+            class="modal-scroll-btn"
+            id="modal-scroll-toggle"
+            title="Cuộn lên / Cuộn xuống"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 640 640"
+              width="14"
+              height="14"
+              fill="currentColor"
+            >
+              <path
+                d="M470.6 566.6L566.6 470.6C575.8 461.4 578.5 447.7 573.5 435.7C568.5 423.7 556.9 416 544 416L480 416L480 96C480 78.3 465.7 64 448 64C430.3 64 416 78.3 416 96L416 416L352 416C339.1 416 327.4 423.8 322.4 435.8C317.4 447.8 320.2 461.5 329.3 470.7L425.3 566.7C437.8 579.2 458.1 579.2 470.6 566.7zM214.6 73.4C202.1 60.9 181.8 60.9 169.3 73.4L73.3 169.4C64.1 178.6 61.4 192.3 66.4 204.3C71.4 216.3 83.1 224 96 224L160 224L160 544C160 561.7 174.3 576 192 576C209.7 576 224 561.7 224 544L224 224L288 224C300.9 224 312.6 216.2 317.6 204.2C322.6 192.2 319.8 178.5 310.7 169.3L214.7 73.3z"
+              />
             </svg>
           </button>
         </div>
@@ -270,9 +355,20 @@
       <div class="modal modal-settings">
         <div class="modal-header">
           <div class="settings-title-wrap">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
-              <circle cx="12" cy="12" r="3"/>
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="#60a5fa"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path
+                d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
+              />
+              <circle cx="12" cy="12" r="3" />
             </svg>
             <h2>System Settings</h2>
           </div>
@@ -280,13 +376,21 @@
         </div>
 
         <div class="settings-nav-tabs">
-          <button type="button" class="settings-tab-btn active" data-tab="tab-llm">
+          <button
+            type="button"
+            class="settings-tab-btn active"
+            data-tab="tab-llm"
+          >
             ⚡ LLM Models & Agent Roles
           </button>
           <button type="button" class="settings-tab-btn" data-tab="tab-tokens">
             🔑 Figma & Git Access Tokens
           </button>
-          <button type="button" class="settings-tab-btn" data-tab="tab-projects">
+          <button
+            type="button"
+            class="settings-tab-btn"
+            data-tab="tab-projects"
+          >
             📁 Projects
           </button>
         </div>
@@ -296,23 +400,42 @@
           <div class="panel-section">
             <div class="panel-title">Tools — LLM Models</div>
             <p class="settings-hint">
-              Bật/tắt model có sẵn hoặc thêm provider mới (BASE_URL + Model + API Key).
+              Bật/tắt model có sẵn hoặc thêm provider mới (BASE_URL + Model +
+              API Key).
             </p>
             <div class="token-list" id="llm-tool-list"></div>
-            
+
             <form class="llm-tool-form" id="llm-tool-form">
               <div class="form-grid-3">
-                <input type="text" id="llm-base-url" placeholder="BASE_URL (vd: https://api.openai.com/v1)" required />
-                <input type="text" id="llm-model" placeholder="Model (vd: deepseek-chat)" required />
-                <input type="password" id="llm-api-key" placeholder="API Key (sk-...)" required />
+                <input
+                  type="text"
+                  id="llm-base-url"
+                  placeholder="BASE_URL (vd: https://api.openai.com/v1)"
+                  required
+                />
+                <input
+                  type="text"
+                  id="llm-model"
+                  placeholder="Model (vd: deepseek-chat)"
+                  required
+                />
+                <input
+                  type="password"
+                  id="llm-api-key"
+                  placeholder="API Key (sk-...)"
+                  required
+                />
               </div>
               <button type="submit" id="llm-tool-add">+ Thêm LLM Model</button>
             </form>
           </div>
 
-          <div class="panel-section" style="margin-top: 20px;">
+          <div class="panel-section" style="margin-top: 20px">
             <div class="panel-title">Model theo vai trò Agent</div>
-            <p class="settings-hint">Gán model cụ thể cho từng nhóm nhiệm vụ (Planner, Coder, Critic, Summary).</p>
+            <p class="settings-hint">
+              Gán model cụ thể cho từng nhóm nhiệm vụ (Planner, Coder, Critic,
+              Summary).
+            </p>
             <div class="agent-models" id="agent-models"></div>
           </div>
         </div>
@@ -322,26 +445,53 @@
           <div class="panel-section">
             <div class="panel-title">Figma Tokens</div>
             <p class="settings-hint">
-              Personal access token (<code>figd_…</code>) kết nối trực tiếp với Figma API.
+              Personal access token (<code>figd_…</code>) kết nối trực tiếp với
+              Figma API.
             </p>
             <div class="token-list" id="token-list"></div>
             <form class="token-form" id="token-form">
-              <input type="text" id="token-name" placeholder="Tên token (vd: figma-team-key)" required />
-              <input type="password" id="token-value" placeholder="figd_…" required />
+              <input
+                type="text"
+                id="token-name"
+                placeholder="Tên token (vd: figma-team-key)"
+                required
+              />
+              <input
+                type="password"
+                id="token-value"
+                placeholder="figd_…"
+                required
+              />
               <button type="submit" id="token-add">+ Thêm Figma Token</button>
             </form>
           </div>
 
-          <div class="panel-section" style="margin-top: 20px;">
+          <div class="panel-section" style="margin-top: 20px">
             <div class="panel-title">Git Tokens (Private Repositories)</div>
             <p class="settings-hint">
               PAT Token truy cập repository private (GitHub/GitLab).
             </p>
             <div class="token-list" id="git-token-list"></div>
             <form class="token-form" id="git-token-form">
-              <input type="text" id="git-token-name" placeholder="Tên token (vd: github-main)" required />
-              <input type="text" id="git-token-host" placeholder="Host (github.com)" value="github.com" required />
-              <input type="password" id="git-token-value" placeholder="ghp_… / glpat-…" required />
+              <input
+                type="text"
+                id="git-token-name"
+                placeholder="Tên token (vd: github-main)"
+                required
+              />
+              <input
+                type="text"
+                id="git-token-host"
+                placeholder="Host (github.com)"
+                value="github.com"
+                required
+              />
+              <input
+                type="password"
+                id="git-token-value"
+                placeholder="ghp_… / glpat-…"
+                required
+              />
               <button type="submit" id="git-token-add">+ Thêm Git Token</button>
             </form>
           </div>
@@ -352,20 +502,36 @@
           <div class="panel-section">
             <div class="panel-title">Thư mục gốc clone (Projects root)</div>
             <p class="settings-hint">
-              Repo Git được clone <strong>ngoài</strong> thư mục Orchestrator để tránh nặng workspace.
-              Khi chat clone mà không ghi path, Conan sẽ hỏi — hoặc dùng gốc này + tên project.
+              Repo Git được clone <strong>ngoài</strong> thư mục Orchestrator để
+              tránh nặng workspace. Khi chat clone mà không ghi path, Conan sẽ
+              hỏi — hoặc dùng gốc này + tên project.
             </p>
-            <form class="token-form" id="projects-root-form" style="flex-wrap: wrap;">
+            <form
+              class="token-form"
+              id="projects-root-form"
+              style="flex-wrap: wrap"
+            >
               <input
                 type="text"
                 id="projects-root-input"
                 placeholder="vd: D:\Dev\AI-Projects"
-                style="flex: 1; min-width: 220px;"
+                style="flex: 1; min-width: 220px"
               />
               <button type="submit">Lưu</button>
-              <button type="button" id="projects-root-reset" class="btn-secondary" title="Reset về mặc định">Mặc định</button>
+              <button
+                type="button"
+                id="projects-root-reset"
+                class="btn-secondary"
+                title="Reset về mặc định"
+              >
+                Mặc định
+              </button>
             </form>
-            <p class="settings-hint" id="projects-root-effective" style="margin-top: 10px;"></p>
+            <p
+              class="settings-hint"
+              id="projects-root-effective"
+              style="margin-top: 10px"
+            ></p>
           </div>
         </div>
       </div>
@@ -382,14 +548,28 @@
           Tạo project rồi chọn nó — task mới từ Chat gắn vào project đang chọn.
         </p>
         <div class="project-mode-tabs" role="tablist">
-          <button type="button" class="project-mode-tab active" data-mode="folder" id="project-mode-folder">
+          <button
+            type="button"
+            class="project-mode-tab active"
+            data-mode="folder"
+            id="project-mode-folder"
+          >
             Thư mục mới
           </button>
-          <button type="button" class="project-mode-tab" data-mode="git" id="project-mode-git">
+          <button
+            type="button"
+            class="project-mode-tab"
+            data-mode="git"
+            id="project-mode-git"
+          >
             Git clone
           </button>
         </div>
-        <form class="token-form" id="project-form" style="flex-direction: column; align-items: stretch;">
+        <form
+          class="token-form"
+          id="project-form"
+          style="flex-direction: column; align-items: stretch"
+        >
           <div class="project-fields" id="project-fields-folder">
             <input
               type="text"
@@ -427,31 +607,149 @@
     </div>
 
     <!-- Custom Reusable Confirm Modal (Dark Glassmorphism, Symmetrical Pixel-Perfect UI) -->
-    <div class="modal-backdrop hidden" id="confirm-backdrop" style="z-index: 2500; backdrop-filter: blur(8px); background: rgba(0,0,0,0.75);">
-      <div class="modal" style="width: 420px; max-width: 90vw; text-align: center; padding: 28px 24px 24px; background: #14151b; border: 1px solid rgba(255,255,255,0.08); border-radius: 16px; box-shadow: 0 24px 48px rgba(0,0,0,0.8), 0 0 1px rgba(255,255,255,0.1); margin: auto;">
-        
+    <div
+      class="modal-backdrop hidden"
+      id="confirm-backdrop"
+      style="
+        z-index: 2500;
+        backdrop-filter: blur(8px);
+        background: rgba(0, 0, 0, 0.75);
+      "
+    >
+      <div
+        class="modal"
+        style="
+          width: 420px;
+          max-width: 90vw;
+          text-align: center;
+          padding: 28px 24px 24px;
+          background: #14151b;
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 16px;
+          box-shadow:
+            0 24px 48px rgba(0, 0, 0, 0.8),
+            0 0 1px rgba(255, 255, 255, 0.1);
+          margin: auto;
+        "
+      >
         <!-- Warning Badge Icon -->
-        <div style="width: 52px; height: 52px; margin: 0 auto 16px; border-radius: 50%; background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.3); display: flex; align-items: center; justify-content: center;">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-            <line x1="12" y1="9" x2="12" y2="13"/>
-            <line x1="12" y1="17" x2="12.01" y2="17"/>
+        <div
+          style="
+            width: 52px;
+            height: 52px;
+            margin: 0 auto 16px;
+            border-radius: 50%;
+            background: rgba(239, 68, 68, 0.12);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+          "
+        >
+          <svg
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="#f87171"
+            stroke-width="2.2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path
+              d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"
+            />
+            <line x1="12" y1="9" x2="12" y2="13" />
+            <line x1="12" y1="17" x2="12.01" y2="17" />
           </svg>
         </div>
 
         <!-- Title & Description -->
-        <h3 id="confirm-title" style="margin: 0 0 8px; color: #f8fafc; font-size: 1.15rem; font-weight: 650; letter-spacing: -0.01em;">Xác nhận Hủy & Rollback</h3>
-        <p id="confirm-msg" style="color: #94a3b8; font-size: 0.88rem; margin: 0 0 24px; line-height: 1.55; text-align: center; padding: 0 4px;"></p>
+        <h3
+          id="confirm-title"
+          style="
+            margin: 0 0 8px;
+            color: #f8fafc;
+            font-size: 1.15rem;
+            font-weight: 650;
+            letter-spacing: -0.01em;
+          "
+        >
+          Xác nhận Hủy & Rollback
+        </h3>
+        <p
+          id="confirm-msg"
+          style="
+            color: #94a3b8;
+            font-size: 0.88rem;
+            margin: 0 0 24px;
+            line-height: 1.55;
+            text-align: center;
+            padding: 0 4px;
+          "
+        ></p>
 
         <!-- Equal-Width Symmetrical Action Buttons (Grid 1fr 1fr) -->
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; width: 100%;">
-          <button type="button" id="confirm-cancel-btn" style="height: 42px; background: #22242e; color: #cbd5e1; border: 1px solid #334155; border-radius: 10px; font-size: 0.88rem; font-weight: 600; cursor: pointer; transition: all 0.15s ease;">Hủy bỏ</button>
-          <button type="button" id="confirm-ok-btn" style="height: 42px; background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: #ffffff; border: none; border-radius: 10px; font-size: 0.88rem; font-weight: 600; cursor: pointer; box-shadow: 0 4px 14px rgba(239, 68, 68, 0.4); transition: all 0.15s ease;">Đồng ý</button>
+        <div
+          style="
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            width: 100%;
+          "
+        >
+          <button
+            type="button"
+            id="confirm-cancel-btn"
+            style="
+              height: 42px;
+              background: #22242e;
+              color: #cbd5e1;
+              border: 1px solid #334155;
+              border-radius: 10px;
+              font-size: 0.88rem;
+              font-weight: 600;
+              cursor: pointer;
+              transition: all 0.15s ease;
+            "
+          >
+            Hủy bỏ
+          </button>
+          <button
+            type="button"
+            id="confirm-ok-btn"
+            style="
+              height: 42px;
+              background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+              color: #ffffff;
+              border: none;
+              border-radius: 10px;
+              font-size: 0.88rem;
+              font-weight: 600;
+              cursor: pointer;
+              box-shadow: 0 4px 14px rgba(239, 68, 68, 0.4);
+              transition: all 0.15s ease;
+            "
+          >
+            Đồng ý
+          </button>
         </div>
-
       </div>
     </div>
 
-    <script type="module" src="/static/js/main.js?v=71"></script>
+    <script type="module" src="/static/js/main.js?v=80"></script>
+    <script type="module">
+      // Bắt lỗi import graph (export mismatch do Chrome cache module cũ)
+      import("/static/js/main.js").catch((e) => {
+        console.error("Boot failed:", e);
+        const el = document.getElementById("boot-error");
+        if (!el) return;
+        el.hidden = false;
+        el.textContent =
+          "UI không tải được JS: " +
+          (e && e.message ? e.message : String(e)) +
+          " — bấm Ctrl+Shift+R, hoặc cửa sổ ẩn danh / tắt extension.";
+      });
+    </script>
   </body>
 </html>

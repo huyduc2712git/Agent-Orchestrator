@@ -160,6 +160,12 @@ const ROLE_UI_META = {
     avatar: "",
     icon: "⚙️",
   },
+  vision: {
+    title: "Vision / Image Chat",
+    sub: "Đọc ảnh đính kèm trong Orchestrator Chat (bắt buộc model hỗ trợ ảnh)",
+    avatar: "",
+    icon: "🖼",
+  },
 };
 
 function formatModelOptionLabel(tool) {

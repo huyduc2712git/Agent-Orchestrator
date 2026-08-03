@@ -2,16 +2,21 @@
 import asyncio
 import json
 import logging
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+import uuid
+from pathlib import Path
+
+from fastapi import APIRouter, File, Form, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from .. import bus
+from .. import bus, config
 from ..board import store
 from ..core import orchestrator
 
 log = logging.getLogger("api.chat")
 router = APIRouter(tags=["chat"])
+
+_ALLOWED_IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 
 
 class ChatIn(BaseModel):
@@ -39,6 +44,59 @@ async def post_chat(body: ChatIn):
 
     asyncio.create_task(_run_chat())
     return {"ok": True}
+
+
+@router.post("/api/chat/upload-image")
+async def upload_chat_image(
+    file: UploadFile = File(...),
+    message: str = Form(""),
+    project: str = Form(""),
+):
+    """Nhận ảnh đính kèm chat → lưu uploads → analyze_image_and_chat."""
+    raw_name = (file.filename or "image.png").strip()
+    ext = Path(raw_name).suffix.lower()
+    if ext not in _ALLOWED_IMAGE_EXT:
+        return JSONResponse(
+            {"error": f"Chỉ chấp nhận ảnh: {', '.join(sorted(_ALLOWED_IMAGE_EXT))}"},
+            status_code=400,
+        )
+
+    data = await file.read()
+    if not data:
+        return JSONResponse({"error": "file rỗng"}, status_code=400)
+    if len(data) > config.CHAT_IMAGE_MAX_BYTES:
+        return JSONResponse(
+            {"error": f"Ảnh vượt quá {config.CHAT_IMAGE_MAX_BYTES // (1024 * 1024)}MB"},
+            status_code=400,
+        )
+
+    config.UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    filename = f"{uuid.uuid4().hex}{ext}"
+    dest = (config.UPLOADS_DIR / filename).resolve()
+    if not str(dest).startswith(str(config.UPLOADS_DIR.resolve())):
+        return JSONResponse({"error": "path không hợp lệ"}, status_code=400)
+    dest.write_bytes(data)
+
+    msg = (message or "").strip()
+    display = msg or f"(đính kèm ảnh `{raw_name}`)"
+    # Dùng path tương đối /uploads/... để UI render thumbnail ổn định
+    store.add_chat("user", f"{display}\n🖼 /uploads/{filename}")
+
+    async def _run():
+        try:
+            await orchestrator.analyze_image_and_chat(
+                msg, str(dest), project=(project or "").strip() or None
+            )
+        except Exception as e:
+            log.exception("analyze_image_and_chat crashed")
+            store.add_chat(
+                "conan",
+                f"Xin lỗi, xử lý ảnh bị lỗi: {e}. "
+                "Kiểm tra Settings → role Vision đã gán model hỗ trợ ảnh chưa.",
+            )
+
+    asyncio.create_task(_run())
+    return {"ok": True, "image_url": f"/uploads/{filename}", "filename": filename}
 
 
 @router.get("/api/chat")

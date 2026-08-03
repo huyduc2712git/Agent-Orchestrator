@@ -77,6 +77,11 @@ async def chat(
             resp = await client.post("/chat/completions", json=payload)
             if resp.status_code == 429 or resp.status_code >= 500:
                 raise LLMError(f"HTTP {resp.status_code}: {resp.text[:300]}")
+            # 413: ảnh/payload quá lớn — không retry (cần nén phía caller)
+            if resp.status_code == 413:
+                raise LLMError(
+                    "HTTP 413 Payload Too Large — ảnh/request vượt giới hạn provider."
+                )
             resp.raise_for_status()
             data = resp.json()
             # OpenCode đôi khi trả HTTP 200 kèm {"error":{...}} thay vì choices
@@ -177,6 +182,10 @@ async def chat(
                     base_url,
                 )
                 continue
+
+            # 413 / payload quá lớn: retry vô ích
+            if "413" in str(e) or "payload too large" in str(e).lower():
+                break
 
             if attempt < max_retries:
                 await asyncio.sleep(3 * attempt)

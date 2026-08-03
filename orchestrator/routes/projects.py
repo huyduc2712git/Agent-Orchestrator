@@ -81,6 +81,13 @@ async def list_projects():
     }
 
 
+def _sanitize_slug(raw: str) -> str:
+    """Slug an toàn — chặn path traversal (../) trước khi tính project_dir."""
+    import re
+
+    return re.sub(r"[^a-z0-9]+", "-", (raw or "").lower()).strip("-")[:40] or "project"
+
+
 @router.post("/api/projects")
 async def create_project(body: ProjectIn):
     """Tạo project từ thư mục mới hoặc git clone."""
@@ -102,13 +109,15 @@ async def create_project(body: ProjectIn):
             )
         repo_name = info.get("name") or "project"
         name = name or repo_name
-        slug = (body.slug or name).strip()
+        # Sanitize TRƯỚC resolve_project_dir — tránh slug="../../tmp/x" escape projects_root
+        slug = _sanitize_slug(body.slug or name)
         if not project_dir:
             project_dir, _ = resolve_project_dir(
                 slug=slug,
                 projects_root=settings.effective_projects_root(),
             )
         else:
+            # project_dir do operator tự gõ tường minh — tin tưởng
             Path(project_dir).mkdir(parents=True, exist_ok=True)
 
         clone = git_ops.ensure_clone(git_url, project_dir)
@@ -137,7 +146,7 @@ async def create_project(body: ProjectIn):
 
     if not name:
         return JSONResponse({"error": "cần tên project hoặc git_url"}, status_code=400)
-    slug = (body.slug or name).strip()
+    slug = _sanitize_slug(body.slug or name)
     p = settings.upsert_project(slug, name=name, project_dir=project_dir)
     p = {**p, "git_info": get_git_info(p.get("project_dir") or "")}
     return {"ok": True, "project": p, "active_project": p["slug"]}

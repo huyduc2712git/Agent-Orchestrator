@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import config, settings
+from . import bus, config, settings
 from .core.patrol import patrol_loop
 from .core.scheduler import scheduler_loop
 from .routes import board, chat, git_routes, preview, projects, settings as settings_routes
@@ -109,6 +109,7 @@ def _shutdown_all_backends() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    bus.set_main_loop(asyncio.get_running_loop())
     asyncio.create_task(scheduler_loop())
     asyncio.create_task(patrol_loop())
     active = settings.active_project()
@@ -143,9 +144,33 @@ async def get_artifact(task_id: str, filename: str):
     return FileResponse(path)
 
 
+@app.get("/uploads/{filename}")
+async def get_upload(filename: str):
+    """Serve ảnh chat upload — sandbox path chống traversal (giống /artifacts/)."""
+    if ".." in filename or "/" in filename or "\\" in filename:
+        return JSONResponse({"error": "path không hợp lệ"}, status_code=404)
+    path = (config.UPLOADS_DIR / filename).resolve()
+    if not str(path).startswith(str(config.UPLOADS_DIR.resolve())):
+        return JSONResponse({"error": "path không hợp lệ"}, status_code=404)
+    if not path.is_file():
+        return JSONResponse({"error": "file không tồn tại"}, status_code=404)
+    return FileResponse(path)
+
+
 # ---------- Static UI ----------
 
 app.mount("/static", StaticFiles(directory=config.WEB_DIR), name="static")
+
+
+@app.middleware("http")
+async def _no_cache_ui_assets(request, call_next):
+    """Tránh Chrome giữ JS/CSS cũ — ẩn danh được mà tab thường không thấy project."""
+    response = await call_next(request)
+    path = request.url.path
+    if path == "/" or path.endswith((".html", ".js", ".css")):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+    return response
 
 
 @app.get("/")

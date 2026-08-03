@@ -16,6 +16,8 @@ _in_flight: set[str] = set()
 _semaphore: asyncio.Semaphore | None = None
 _task_retry_counts: dict[str, int] = {}
 _last_auto_check_time: float = 0.0
+_last_handoff_time: float = 0.0
+HANDOFF_INTERVAL_SECONDS = 15
 
 
 def _build_worker_prompt(task: Task) -> str:
@@ -124,6 +126,14 @@ async def _run_worker(task: Task) -> None:
     agent = AGENTS[task.assignee]
     async with _semaphore:
         try:
+            if task.parent_id:
+                parent = store.get_task(task.parent_id)
+                if parent and parent.status in ("blocked", "failed", "archived"):
+                    log.info("Worker %s hủy chạy %s vì parent task %s ở trạng thái %s", task.assignee, task.id, parent.id, parent.status)
+                    if parent.status in ("blocked", "failed"):
+                        store.set_status(task.id, parent.status, "system")
+                    return
+
             store.set_status(task.id, "in_progress", task.assignee)
             log.info("Start %s -> %s (%s)", task.id, task.assignee, task.title)
             result = await run_agent(
@@ -134,13 +144,19 @@ async def _run_worker(task: Task) -> None:
                 agent.tools,
             )
             curr = store.get_task(task.id)
-            if curr and curr.status in ("blocked", "failed", "archived"):
-                log.info("Worker %s kết thúc sớm cho %s vì status đã chuyển sang %s", task.assignee, task.id, curr.status)
+            parent = store.get_task(task.parent_id) if task.parent_id else None
+            if (curr and curr.status in ("blocked", "failed", "archived")) or (parent and parent.status in ("blocked", "failed", "archived")):
+                log.info("Worker %s kết thúc sớm cho %s vì status/parent status đã chuyển sang %s", task.assignee, task.id, curr.status if curr else "blocked")
                 return
-            store.add_event(task.id, task.assignee, "comment", result[:4000])
-            
-            res_lower = result.lower()
-            if "chạm giới hạn vòng lặp" in res_lower or "chưa hoàn tất" in res_lower or "chưa xong" in res_lower:
+            # Marker do runtime gắn khi hết vòng lặp — không dò cụm từ tự do của LLM
+            ITERATION_LIMIT_MARKER = "[ITERATION_LIMIT_REACHED]"
+            hit_limit = (result or "").startswith(ITERATION_LIMIT_MARKER)
+            display = result
+            if hit_limit:
+                display = result[len(ITERATION_LIMIT_MARKER):].lstrip()
+            store.add_event(task.id, task.assignee, "comment", display[:4000])
+
+            if hit_limit:
                 log.warning("Worker %s chưa hoàn tất %s do chạm max iterations — requeuing to backlog", task.assignee, task.id)
                 store.set_status(task.id, "backlog", task.assignee)
                 store.add_event(task.id, "system", "system", "Chạm giới hạn vòng lặp tool — tự động đưa về backlog để Agent chạy tiếp lượt sau.")
@@ -184,6 +200,14 @@ def auto_recover_stuck_and_blocked_tasks() -> None:
 
         if t.id not in _in_flight:
             try:
+                if t.parent_id:
+                    parent = store.get_task(t.parent_id)
+                    if parent and parent.status in ("blocked", "failed", "archived", "done"):
+                        target_st = parent.status if parent.status in ("blocked", "failed") else "done"
+                        log.info("Conan Auto-Recovery: Parent task %s is %s — setting subtask %s -> %s", t.parent_id, parent.status, t.id, target_st)
+                        store.set_status(t.id, target_st, "conan")
+                        continue
+
                 updated_dt = datetime.fromisoformat(t.updated_at)
                 if (now_utc - updated_dt).total_seconds() > 120:
                     log.info("Conan Auto-Recovery: Resetting stuck in_progress task %s (%s) -> backlog", t.id, t.title)
@@ -196,6 +220,12 @@ def auto_recover_stuck_and_blocked_tasks() -> None:
     # 2. Quét task/subtask bị blocked để tự động rerun (tối đa 3 lần)
     blocked_tasks = store.list_tasks(status=["blocked"])
     for t in blocked_tasks:
+        if t.parent_id:
+            parent = store.get_task(t.parent_id)
+            if parent and parent.status == "blocked":
+                # Parent task đang blocked -> giữ nguyên subtask blocked, không auto-recover
+                continue
+
         # Nếu Operator chủ động block -> KHÔNG tự động auto-recover, giữ nguyên blocked chờ Operator
         events = store.list_events(t.id)
         if any(e.agent == "operator" and ("blocked" in e.message.lower() or "dừng" in e.message.lower()) for e in events[-10:]):
@@ -253,8 +283,14 @@ def auto_recover_stuck_and_blocked_tasks() -> None:
                 for m in blobs
             )
             if qa_failed:
-                if _task_retry_counts.get(t.id, 0) < 3:
-                    _task_retry_counts[t.id] = 3  # chặn vòng auto-retry vô ích
+                _task_retry_counts[t.id] = max(_task_retry_counts.get(t.id, 0), 3)
+                # Chỉ thông báo 1 lần — reload server / vòng auto-recover sau không spam chat
+                already_notified = any(
+                    "bỏ qua auto-retry" in (e.message or "")
+                    or "QA/Review FAIL" in (e.message or "")
+                    for e in events[-40:]
+                )
+                if not already_notified:
                     store.add_event(
                         t.id, "conan", "system",
                         "Auto-Recovery: bỏ qua auto-retry — QA/Final review đã FAIL. "
@@ -288,8 +324,11 @@ def auto_recover_stuck_and_blocked_tasks() -> None:
                         store.set_status(st.id, "failed", "conan")
                         store.add_event(st.id, "conan", "system", f"Task cha {t.id} đã thất bại, subtask tự động bị huỷ.")
 
-    # 3. Conan kiểm tra toàn bộ tiến độ vòng đời task cha & tự động trigger closure khi subtasks xong
-    parent_tasks = [t for t in store.list_tasks(include_archived=False) if not t.parent_id and t.status not in ("done", "archived", "failed")]
+    # 3. Conan kiểm tra tiến độ parent — bỏ blocked/failed (đã chờ operator, không spam chat)
+    parent_tasks = [
+        t for t in store.list_tasks(include_archived=False)
+        if not t.parent_id and t.status not in ("done", "archived", "failed", "blocked")
+    ]
     for pt in parent_tasks:
         try:
             asyncio.create_task(orchestrator.check_parent_progress(pt.id))
@@ -299,7 +338,7 @@ def auto_recover_stuck_and_blocked_tasks() -> None:
 
 async def scheduler_loop() -> None:
     """Quét board định kỳ, spawn agent cho task đủ điều kiện chạy."""
-    global _semaphore, _last_auto_check_time
+    global _semaphore, _last_auto_check_time, _last_handoff_time
     _semaphore = asyncio.Semaphore(config.MAX_CONCURRENT_AGENTS)
     log.info("Scheduler started")
 
@@ -311,9 +350,13 @@ async def scheduler_loop() -> None:
         ]
         for ot in orphaned:
             parent = store.get_task(ot.parent_id)
-            if parent and parent.status in ("done", "archived", "failed"):
-                log.info("Parent task %s is %s — marking orphaned subtask %s -> done", ot.parent_id, parent.status, ot.id)
-                store.set_status(ot.id, "done", "system")
+            if parent and parent.status in ("done", "archived", "failed", "blocked"):
+                if parent.status in ("done", "archived"):
+                    log.info("Parent task %s is %s — marking orphaned subtask %s -> done", ot.parent_id, parent.status, ot.id)
+                    store.set_status(ot.id, "done", "system")
+                else:
+                    log.info("Parent task %s is %s — setting orphaned subtask %s -> %s", ot.parent_id, parent.status, ot.id, parent.status)
+                    store.set_status(ot.id, parent.status, "system")
             else:
                 log.info("Resetting orphaned in_progress subtask %s -> backlog for auto-resumption", ot.id)
                 store.set_status(ot.id, "backlog", "system")
@@ -333,15 +376,25 @@ async def scheduler_loop() -> None:
                 _last_auto_check_time = current_time
                 auto_recover_stuck_and_blocked_tasks()
 
+            if current_time - _last_handoff_time >= HANDOFF_INTERVAL_SECONDS:
+                _last_handoff_time = current_time
+                try:
+                    from .handoff import write_handoff_snapshot
+                    write_handoff_snapshot()
+                except Exception:
+                    log.exception("write_handoff_snapshot failed")
+
             candidates = store.list_tasks(status=["backlog"])
             for t in candidates:
                 if t.assignee not in WORKER_KEYS or t.id in _in_flight:
                     continue
                 if t.parent_id:
                     parent = store.get_task(t.parent_id)
-                    if parent and parent.status in ("done", "archived", "failed"):
+                    if parent and parent.status in ("done", "archived", "failed", "blocked"):
                         if parent.status == "done":
                             store.set_status(t.id, "done", "system")
+                        elif parent.status in ("blocked", "failed"):
+                            store.set_status(t.id, parent.status, "system")
                         continue
                 if not store.deps_satisfied(t.id):
                     continue

@@ -941,6 +941,26 @@ body.sidebar-collapsed .sidebar-settings {
   border-top-left-radius: 4px;
   color: #fef08a;
 }
+.chat-img-link {
+  display: inline-block;
+  margin-top: 6px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  line-height: 0;
+  vertical-align: middle;
+}
+.chat-attach-thumb {
+  display: block;
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  background: #0b0d14;
+}
+.msg-bubble.user-bubble .chat-img-link {
+  margin-left: 0;
+}
+
 .msg-bubble.user-bubble {
   background: #60ABFB;
   color: #FFFFFF;
@@ -1026,6 +1046,55 @@ body.sidebar-collapsed .sidebar-settings {
 }
 .chat-composer textarea::placeholder {
   color: #818cf8; opacity: 0.85; font-weight: 450;
+}
+
+.composer-attach-preview {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  max-width: min(320px, 100%);
+  align-self: flex-start;
+  padding: 5px 6px 5px 5px;
+  margin-bottom: 2px;
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  border-radius: 10px;
+}
+.composer-attach-preview.hidden { display: none !important; }
+.composer-attach-preview img {
+  width: 36px;
+  height: 36px;
+  object-fit: cover;
+  border-radius: 6px;
+  flex-shrink: 0;
+  background: #0b0d14;
+}
+.composer-attach-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 180px;
+  font-size: 0.78rem;
+  color: #cbd5e1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.composer-attach-remove {
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.composer-attach-remove:hover {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
 }
 
 .composer-toolbar {

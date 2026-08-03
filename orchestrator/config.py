@@ -25,6 +25,8 @@ MODEL_PLANNER = os.getenv("MODEL_PLANNER", "deepseek-v4-flash-free")
 MODEL_CODER = os.getenv("MODEL_CODER", "deepseek-v4-flash-free")
 MODEL_CRITIC = os.getenv("MODEL_CRITIC", "nemotron-3-ultra-free")
 MODEL_SUMMARY = os.getenv("MODEL_SUMMARY", "mimo-v2.5-free")
+# Vision: không có default free — phải gán model hỗ trợ ảnh trong Settings (role vision)
+MODEL_VISION = os.getenv("MODEL_VISION", "")
 
 HOST = os.getenv("HOST", "127.0.0.1")
 PORT = int(os.getenv("PORT", "8600"))
@@ -34,6 +36,7 @@ WORKSPACE_DIR = ROOT_DIR / "workspace"
 MEMORY_DIR = WORKSPACE_DIR / "memory"
 WIKI_DIR = WORKSPACE_DIR / "wiki"
 ARTIFACTS_DIR = WORKSPACE_DIR / "artifacts"
+UPLOADS_DIR = WORKSPACE_DIR / "uploads"
 DB_PATH = WORKSPACE_DIR / "board.db"
 WEB_DIR = ROOT_DIR / "web"
 
@@ -42,10 +45,15 @@ MAX_AGENT_ITERATIONS = 45
 COMMAND_TIMEOUT_SECONDS = 120
 MAX_TOOL_OUTPUT_CHARS = 12_000
 MAX_CONCURRENT_AGENTS = 1
+CHAT_IMAGE_MAX_BYTES = 8 * 1024 * 1024
+# Nén ảnh trước khi gửi vision API (tránh 413 Payload Too Large — Cloudflare/Workers AI)
+VISION_IMAGE_MAX_SIDE = 1280
+VISION_IMAGE_JPEG_QUALITY = 82
+VISION_IMAGE_MAX_BYTES = 900_000  # ~0.9MB raw → base64 vẫn dưới giới hạn payload thường gặp
 
 # Board Patrol quét định kỳ (giây)
 PATROL_INTERVAL_SECONDS = 30 * 60
 SCHEDULER_INTERVAL_SECONDS = 3
 
-for _d in (WORKSPACE_DIR, MEMORY_DIR, WIKI_DIR, ARTIFACTS_DIR):
+for _d in (WORKSPACE_DIR, MEMORY_DIR, WIKI_DIR, ARTIFACTS_DIR, UPLOADS_DIR):
     _d.mkdir(parents=True, exist_ok=True)

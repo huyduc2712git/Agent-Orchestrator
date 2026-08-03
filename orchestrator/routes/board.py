@@ -1,4 +1,5 @@
 """Board & Tasks CRUD API routes."""
+import asyncio
 import os
 import logging
 from fastapi import APIRouter
@@ -18,8 +19,7 @@ class StatusIn(BaseModel):
     status: str
 
 
-@router.get("/api/board")
-async def get_board():
+def _build_board_payload() -> dict:
     tasks = [t.to_dict() for t in store.list_tasks(include_archived=False)]
     seen: dict[str, str] = {}
     for t in tasks:
@@ -27,6 +27,12 @@ async def get_board():
             seen[t["project"]] = t.get("project_dir") or ""
     settings.ensure_project_from_tasks(list(seen.items()))
     return {"statuses": STATUSES, "tasks": tasks}
+
+
+@router.get("/api/board")
+async def get_board():
+    # Off event-loop: tránh chặn WS/API khác khi SQLite đang bị tool thread ghi
+    return await asyncio.to_thread(_build_board_payload)
 
 
 @router.get("/api/tasks/{task_id}")
@@ -49,6 +55,15 @@ async def get_task(task_id: str):
 @router.post("/api/tasks/{task_id}/status")
 async def operator_set_status(task_id: str, body: StatusIn):
     result = store.set_status(task_id, body.status, "operator")
+    if result.accepted and body.status == "blocked":
+        subtasks = store.list_tasks(parent_id=task_id)
+        for st in subtasks:
+            if st.status not in ("done", "archived"):
+                try:
+                    store.set_status(st.id, "blocked", "operator")
+                    store.add_event(st.id, "operator", "system", f"Task cha `{task_id}` bị Operator chuyển sang Blocked -> Subtask bị dừng theo.")
+                except Exception:
+                    pass
     return {"accepted": result.accepted, "final_status": result.final_status, "note": result.note}
 
 
@@ -73,10 +88,11 @@ async def operator_block_task(task_id: str):
             if st.status not in ("done", "archived"):
                 try:
                     store.set_status(st.id, "blocked", "operator")
+                    store.add_event(st.id, "operator", "system", f"Task cha `{task_id}` bị Operator dừng -> Subtask bị dừng theo.")
                 except Exception:
                     pass
         store.add_event(task_id, "operator", "system", "Operator chủ động dừng task và chuyển sang Blocked.")
-        store.add_chat("system", f"🛑 Operator đã dừng {task_id} và chuyển sang Blocked (Needs Attention) để kiểm tra.")
+        store.add_chat("system", f"🛑 Operator đã dừng {task_id} và tất cả subtask con chuyển sang Blocked.")
         bus.publish({
             "type": "status_changed",
             "task_id": task_id,

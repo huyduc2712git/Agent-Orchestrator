@@ -5,7 +5,7 @@ import { loadBoard, loadProjects, blockTask, selectProject } from "./api.js";
 import { renderBoard } from "./components/board.js";
 import { renderSidebar, switchView, goChat, notifyTab } from "./components/sidebar.js";
 import { openModal, openNewProject, setProjectCreateMode, renderEvent } from "./components/modal.js";
-import { loadChat, sendChatMessage, resizeChatInput, resetChatInputHeight, appendChatMessage, renderChatMessage, setThinking } from "./components/chat.js";
+import { loadChat, sendChatMessage, resizeChatInput, resetChatInputHeight, appendChatMessage, renderChatMessage, setThinking, initChatImageAttach } from "./components/chat.js";
 import { initSettingsEvents, openSettingsModal } from "./components/settings.js";
 
 // Make key functions available globally for inline HTML events
@@ -157,13 +157,12 @@ function initEvents() {
     }
   });
 
-  // Chat Form & Suggestions
+  // Chat Form & Suggestions — text và/hoặc ảnh đã đính trong composer
   $("chat-form")?.addEventListener("submit", async (e) => {
     e.preventDefault();
     const ta = $("chat-text");
     if (!ta) return;
-    const text = ta.value.trim();
-    await sendChatMessage(text);
+    await sendChatMessage(ta.value);
   });
 
   $("chat-text")?.addEventListener("keydown", (e) => {
@@ -201,12 +200,31 @@ function initEvents() {
 }
 
 // Initial Boot
-document.addEventListener("DOMContentLoaded", () => {
-  initEvents();
-  switchView("board");
-  loadChat();
-  loadBoard();
-  connectWS();
-  startDurationTicker();
-  resizeChatInput();
-});
+function boot() {
+  try {
+    initEvents();
+    initChatImageAttach();
+    switchView("board");
+    // Projects độc lập với board — tránh sidebar trống khi /api/board chậm/treo
+    loadProjects();
+    loadChat();
+    loadBoard();
+    connectWS();
+    startDurationTicker();
+    resizeChatInput();
+  } catch (e) {
+    console.error("Boot init failed:", e);
+    const el = document.getElementById("boot-error");
+    if (el) {
+      el.hidden = false;
+      el.textContent = "UI init lỗi: " + (e && e.message ? e.message : String(e));
+    }
+  }
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", boot);
+} else {
+  // module load xong sau DOMContentLoaded (thường gặp khi Chrome cache chậm) — vẫn boot
+  boot();
+}

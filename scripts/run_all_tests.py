@@ -1,5 +1,4 @@
 """Unified Test Runner — Chạy toàn bộ các file test offline trong scripts/ và tổng hợp kết quả."""
-import os
 import sys
 import time
 import subprocess
@@ -24,6 +23,13 @@ TEST_FILES = [
     ("test_run_command_cross_platform.py", "run_command cross-platform shell"),
     ("test_bug_area_routing.py", "Bug route Kid/Agasa theo area"),
     ("test_gate_critic_stage.py", "Gate Security/Pentest dùng chung"),
+    ("test_git_push_safety.py", "Git push kiểm tra add/commit trước khi push"),
+    ("test_project_slug_path_traversal.py", "Chặn path traversal qua slug clone"),
+    ("test_scheduler_iteration_limit_marker.py", "Marker hết vòng lặp tool"),
+    ("test_image_chat_flow.py", "Plumbing chat đính kèm ảnh"),
+    ("test_review_card.py", "Human Review Card markdown"),
+    ("test_handoff_snapshot.py", "Handoff snapshot workspace/handoff.md"),
+    ("test_bus_threadsafe.py", "bus.publish an toàn từ worker thread"),
     ("test_figma.py", "Parse link & auth error handling Figma"),
 ]
 
