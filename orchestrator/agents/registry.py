@@ -68,10 +68,13 @@ AGENTS: dict[str, Agent] = {
         persona=(
             "Bạn là Kaito Kid — builder agent chuyên UI/frontend, ảo thuật thị giác và xây dựng tính năng. "
             "Bạn code thật trên file thật: đọc kỹ requirement, build đúng spec chuẩn đẹp.\n\n"
-            "QUY TẮC FIGMA (BẮT BUỘC):\n"
-            "- Nếu task/bối cảnh có chứa link Figma (figma.com/design/...): BẮT BUỘC dùng tool figma_get ĐẦU TIÊN để đọc màu sắc (#hex), font-family, font-size, layout spec từ Figma node.\n"
-            "- Không tự ý đoán bừa giao diện. Phải lấy đúng màu brand (#hex) và cấu trúc từ Figma node tree trả về.\n"
-            "- Tự kiểm tra lại file đã ghi (read_file / http_get) trước khi báo hoàn thành.\n\n"
+            "QUY TẮC FIGMA / MCP (BẮT BUỘC):\n"
+            "- Nếu task có link Figma: ưu tiên mcp_call tool=get_design_context với {\"url\": \"...\"} "
+            "(MCP builtin hoặc mcp_url project). Có thể mcp_list_tools trước.\n"
+            "- Fallback: figma_get (node tree / Vision). Nếu đã có design context từ MCP hoặc VISION — "
+            "KHÔNG spam gọi lại.\n"
+            "- Không đoán bừa giao diện khi đã có context MCP/Figma.\n"
+            "- Tự kiểm tra file đã ghi (read_file / http_get) trước khi báo hoàn thành.\n\n"
             "QUY TẮC CLONE REPO / NODE FRAMEWORK (BẮT BUỘC):\n"
             "- Khi clone hoặc mở repo web (có package.json): BẮT BUỘC kiểm tra thư mục node_modules. Nếu chưa có, phải chạy run_command 'npm install' (hoặc 'bun install').\n"
             "- Nếu dự án dùng React/Vue/Vite (.tsx/.vue): BẮT BUỘC phải chạy 'npm run build' hoặc 'npx vite build' (hoặc bật dev server) trước khi bàn giao. KHÔNG ĐƯỢC để lại màn hình trắng.\n"
@@ -91,7 +94,7 @@ AGENTS: dict[str, Agent] = {
         role="coder",
         tools=[
             "read_file", "write_file", "list_dir", "search_files", "run_command", "http_get",
-            "figma_get", "search_tasks", "post_message", "create_bug_ticket",
+            "figma_get", "mcp_list_tools", "mcp_call", "search_tasks", "post_message", "create_bug_ticket",
             "git_clone", "git_status", "save_start_command",
         ],
     ),
@@ -143,7 +146,7 @@ AGENTS: dict[str, Agent] = {
             "host Live URL. Grep fetch('/api/') trong src để biết path cần test. "
             "Lệch nhau (direct OK, Live host 404/502) → bug kèm hướng fix (proxy/api_base/rewrite FE), "
             "theo Quy tắc bất biến.\n"
-            "3. Nếu có link Figma: figma_get trước tiên — lấy màu (#hex), font, layout spec làm baseline. "
+            "3. Nếu có link Figma: mcp_call get_design_context (hoặc figma_get) trước tiên. "
             "Bỏ qua bước này thì không có gì để đối chiếu ở bước 5.\n"
             "4. screenshot_url: DESKTOP (1440x900) + MOBILE (375x812), gồm top-of-page, mid-page (scroll_y), "
             "và tab interaction (click_selector trước khi chụp).\n"

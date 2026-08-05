@@ -444,7 +444,7 @@ export async function openModal(taskId) {
       // Hiện đúng assignee trên board — không đổi kid→heiji chỉ vì status=testing
       const agentName = sub.assignee || "kid";
       const iconHtml = getAgentIconHtml(agentName.toLowerCase());
-      const { statusText, subCls } = childStatusMeta(sub.status);
+      const { statusText, subCls } = childStatusMeta(sub.status, agentName);
       const label = sub.id ? sub.id : (kind === "bug" ? `Bug #${i + 1}` : `Subtask #${i + 1}`);
       return `
         <div class="modal-subtask-card ${subCls}${kind === "bug" ? " is-bug" : ""}">
@@ -460,8 +460,14 @@ export async function openModal(taskId) {
     if (work.length || bugs.length) {
       let body = "";
       if (work.length) {
-        // testing = đang/ chờ QA — chưa tính "hoàn tất"
-        const completed = work.filter((c) => c.status === "done").length;
+        const completed = work.filter((c) => {
+          if (c.status === "done") return true;
+          if (c.status === "testing") {
+            const a = (c.assignee || "").toLowerCase();
+            return !["heiji", "akai", "amuro", "haibara"].includes(a);
+          }
+          return false;
+        }).length;
         const pct = Math.round((completed / work.length) * 100);
         const hasOpenBugs = bugs.some((b) => b.status !== "done" && b.status !== "archived");
         const pStyle = getProgressStyle(pct, hasOpenBugs);

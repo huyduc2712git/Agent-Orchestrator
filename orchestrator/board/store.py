@@ -235,6 +235,27 @@ def set_status(task_id: str, new_status: str, actor: str) -> TransitionResult:
     return result
 
 
+def reset_blocked_children_for_rerun(parent_id: str) -> int:
+    """Operator bấm Chạy lại task cha: đưa subtask/bug blocked|failed về backlog.
+
+    Giữ nguyên done/archived. Trả số subtask đã reset.
+    """
+    n = 0
+    for st in list_tasks(parent_id=parent_id):
+        if st.status in ("done", "archived"):
+            continue
+        if st.status not in ("blocked", "failed"):
+            continue
+        res = set_status(st.id, "backlog", "operator")
+        if res.accepted and res.final_status == "backlog":
+            add_event(
+                st.id, "operator", "system",
+                f"Task cha `{parent_id}` chạy lại → đưa về backlog.",
+            )
+            n += 1
+    return n
+
+
 def archive_task(task_id: str, actor: str = "operator") -> TransitionResult:
     """Archive task qua state machine (không bypass). Đi đường hợp lệ tới archived.
 

@@ -42,6 +42,7 @@ export function initSettingsEvents() {
   setupFigmaTokenForm();
   setupGitTokenForm();
   setupProjectsRootForm();
+  setupFocusProjectMcpForm();
 }
 
 async function loadAndRenderSettings() {
@@ -54,6 +55,7 @@ async function loadAndRenderSettings() {
     renderFigmaTokens(data.figma_tokens || []);
     renderGitTokens(data.git_tokens || []);
     renderProjectsRoot(data.projects_root || "", data.projects_root_custom || "");
+    renderFocusProject(data.active_project || state.activeProject || "", data.active_project_detail || null);
 
     // Update global state
     if (data.agents && Array.isArray(data.agents)) {
@@ -319,6 +321,141 @@ function renderProjectsRoot(effective, custom) {
       ? `Thư mục đang áp dụng: <code style="color:#60a5fa;">${escapeHtml(effective)}</code> (Tùy chỉnh)`
       : `Thư mục đang áp dụng: <code style="color:#60a5fa;">${escapeHtml(effective)}</code> (Mặc định hệ thống)`;
   }
+}
+
+function renderFocusProject(slug, detail) {
+  const card = $("focus-project-card");
+  const input = $("focus-project-mcp-input");
+  const status = $("focus-project-mcp-status");
+  const saveBtn = $("focus-project-mcp-save");
+  const clearBtn = $("focus-project-mcp-clear");
+  const form = $("focus-project-mcp-form");
+
+  if (!slug || !detail) {
+    if (card) {
+      card.innerHTML = state.activeProject
+        ? `Project focus: <b>${escapeHtml(state.activeProject)}</b> — chưa có trong Settings (chọn lại trên sidebar).`
+        : "Chưa chọn project. Chọn một project trên sidebar rồi mở lại Settings.";
+    }
+    if (input) { input.value = ""; input.disabled = true; }
+    if (saveBtn) saveBtn.disabled = true;
+    if (clearBtn) clearBtn.disabled = true;
+    if (status) status.textContent = "";
+    if (form) form.dataset.slug = "";
+    return;
+  }
+
+  const name = detail.name || detail.slug || slug;
+  const dir = detail.project_dir || "—";
+  const mcp = detail.mcp_url || "";
+  if (card) {
+    card.innerHTML = `
+      <div><b>${escapeHtml(name)}</b> <code style="color:#60a5fa;">${escapeHtml(slug)}</code></div>
+      <div style="margin-top:6px;opacity:.85;">Path: <code>${escapeHtml(dir)}</code></div>
+      ${mcp ? `<div style="margin-top:6px;">MCP đã lưu: <code style="color:#34d399;">${escapeHtml(mcp)}</code></div>` : `<div style="margin-top:6px;opacity:.7;">Chưa gắn MCP link.</div>`}
+    `;
+  }
+  if (input) {
+    input.disabled = false;
+    input.value = mcp;
+  }
+  if (saveBtn) saveBtn.disabled = false;
+  if (clearBtn) clearBtn.disabled = !mcp;
+  if (status) status.textContent = "";
+  if (form) form.dataset.slug = slug;
+}
+
+function setupFocusProjectMcpForm() {
+  const form = $("focus-project-mcp-form");
+  if (!form || form.dataset.bound) return;
+  form.dataset.bound = "1";
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const slug = form.dataset.slug || state.activeProject || "";
+    const mcp_url = $("focus-project-mcp-input")?.value.trim() || "";
+    if (!slug) {
+      alert("Chưa có project đang focus.");
+      return;
+    }
+    const btn = $("focus-project-mcp-save");
+    if (btn) { btn.disabled = true; btn.textContent = "Đang lưu…"; }
+    try {
+      const resp = await fetch(`${API_BASE}/api/settings/project-mcp`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slug, mcp_url }),
+      });
+      const data = await resp.json();
+      if (resp.ok) {
+        const st = $("focus-project-mcp-status");
+        if (st) {
+          st.innerHTML = mcp_url
+            ? `Đã lưu MCP cho <code>${escapeHtml(slug)}</code>.`
+            : `Đã xóa MCP của <code>${escapeHtml(slug)}</code>.`;
+        }
+        loadAndRenderSettings();
+      } else {
+        alert(data.error || "Không lưu được MCP link");
+      }
+    } catch (err) {
+      alert("Lỗi kết nối: " + err.message);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = "Lưu MCP"; }
+    }
+  });
+
+  $("focus-project-mcp-clear")?.addEventListener("click", async () => {
+    const slug = form.dataset.slug || state.activeProject || "";
+    if (!slug) return;
+    if (!confirm(`Xóa MCP link của project "${slug}"?`)) return;
+    const input = $("focus-project-mcp-input");
+    if (input) input.value = "";
+    form.requestSubmit();
+  });
+
+  $("focus-project-mcp-builtin")?.addEventListener("click", async () => {
+    try {
+      const resp = await fetch(`${API_BASE}/api/settings/mcp-builtin-url`);
+      const data = await resp.json();
+      if (resp.ok && data.mcp_url) {
+        const input = $("focus-project-mcp-input");
+        if (input) input.value = data.mcp_url;
+        const st = $("focus-project-mcp-status");
+        if (st) st.textContent = "Đã điền builtin MCP — bấm Lưu MCP để gắn vào project.";
+      }
+    } catch (err) {
+      alert("Lỗi: " + err.message);
+    }
+  });
+
+  $("focus-project-mcp-test")?.addEventListener("click", async () => {
+    const slug = form.dataset.slug || state.activeProject || "";
+    const mcp_url = $("focus-project-mcp-input")?.value.trim() || "";
+    const btn = $("focus-project-mcp-test");
+    if (btn) { btn.disabled = true; btn.textContent = "…"; }
+    try {
+      const resp = await fetch(`${API_BASE}/api/settings/project-mcp/test`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slug, mcp_url }),
+      });
+      const data = await resp.json();
+      const st = $("focus-project-mcp-status");
+      if (resp.ok && data.ok) {
+        if (st) {
+          st.innerHTML = `MCP OK — <code>${escapeHtml(data.mcp_url || "")}</code> · tools: ${(data.tools || []).map(escapeHtml).join(", ") || "(none)"}`;
+        }
+      } else {
+        if (st) st.textContent = `MCP fail: ${data.error || "unknown"}`;
+        else alert(data.error || "MCP test fail");
+      }
+    } catch (err) {
+      alert("Lỗi: " + err.message);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = "Test"; }
+    }
+  });
 }
 
 function setupLlmToolForm() {

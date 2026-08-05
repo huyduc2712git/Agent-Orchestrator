@@ -82,6 +82,22 @@ async def chat(
                 raise LLMError(
                     "HTTP 413 Payload Too Large — ảnh/request vượt giới hạn provider."
                 )
+            # 400 với ảnh: thường model text-only — không retry vô ích
+            if resp.status_code == 400:
+                body = resp.text[:500]
+                has_image = any(
+                    isinstance(m.get("content"), list)
+                    and any(
+                        isinstance(p, dict) and p.get("type") == "image_url"
+                        for p in m["content"]
+                    )
+                    for m in messages
+                    if isinstance(m, dict)
+                )
+                if has_image:
+                    raise LLMError(
+                        f"HTTP 400 Bad Request (model có thể không hỗ trợ ảnh): {body}"
+                    )
             resp.raise_for_status()
             data = resp.json()
             # OpenCode đôi khi trả HTTP 200 kèm {"error":{...}} thay vì choices

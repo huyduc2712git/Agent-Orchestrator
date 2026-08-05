@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from . import bus, config, settings
 from .core.patrol import patrol_loop
 from .core.scheduler import scheduler_loop
-from .routes import board, chat, git_routes, preview, projects, settings as settings_routes
+from .routes import board, chat, git_routes, preview, projects, settings as settings_routes, mcp as mcp_routes
 
 logging.basicConfig(
     level=logging.INFO,
@@ -128,6 +128,7 @@ app.include_router(projects.router)
 app.include_router(settings_routes.router)
 app.include_router(git_routes.router)
 app.include_router(preview.router)
+app.include_router(mcp_routes.router)
 
 
 # ---------- QA Artifacts ----------

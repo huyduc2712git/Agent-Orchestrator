@@ -93,11 +93,17 @@ export function attentionFor(t, meta) {
     </div>`;
 }
 
-export function childStatusMeta(status) {
+export function childStatusMeta(status, assignee = "") {
+  const agent = (assignee || "").toLowerCase();
+  const isCritic = ["heiji", "akai", "amuro", "haibara"].includes(agent);
   let statusText = "Pending";
   let subCls = "sub-backlog";
   if (status === "in_progress") { statusText = "Running"; subCls = "sub-working"; }
-  else if (status === "testing") { statusText = "QA Testing"; subCls = "sub-testing"; }
+  else if (status === "testing") {
+    // Critic → QA; Kid/Agasa testing = xong bước → hiện Done (không map sang Heiji)
+    statusText = isCritic ? "QA Testing" : "Done ✓";
+    subCls = isCritic ? "sub-testing" : "sub-done";
+  }
   else if (status === "review") { statusText = "In Review"; subCls = "sub-review"; }
   else if (status === "done") { statusText = "Done ✓"; subCls = "sub-done"; }
   else if (status === "blocked" || status === "failed") {
@@ -145,15 +151,10 @@ export function subtasksFor(t) {
   if (!work.length && !bugs.length) return "";
 
   const renderRows = (list, kind) => list.map((sub, i) => {
-    let agentName = sub.assignee || "kid";
-    const explicitCritics = ["akai", "amuro", "haibara", "heiji", "conan"];
-    if (sub.status === "testing" && !explicitCritics.includes(agentName.toLowerCase())) {
-      agentName = "heiji";
-    } else if (sub.status === "review" && !explicitCritics.includes(agentName.toLowerCase())) {
-      agentName = "haibara";
-    }
+    // Hiện đúng assignee — không map kid→heiji chỉ vì status=testing
+    const agentName = sub.assignee || "kid";
     const iconHtml = getAgentIconHtml(agentName.toLowerCase());
-    const { statusText, subCls } = childStatusMeta(sub.status);
+    const { statusText, subCls } = childStatusMeta(sub.status, agentName);
     const step = sub.id || (kind === "bug" ? `bug-${i + 1}` : `#${i + 1}`);
 
     return `
@@ -168,7 +169,15 @@ export function subtasksFor(t) {
 
   let html = "";
   if (work.length) {
-    const completed = work.filter((c) => c.status === "done" || c.status === "testing" || c.status === "review").length;
+    // done, hoặc builder đã xong bước (testing) — critic testing vẫn là QA chưa xong
+    const completed = work.filter((c) => {
+      if (c.status === "done") return true;
+      if (c.status === "testing") {
+        const a = (c.assignee || "").toLowerCase();
+        return !["heiji", "akai", "amuro", "haibara"].includes(a);
+      }
+      return false;
+    }).length;
     const percent = Math.round((completed / work.length) * 100);
     const hasOpenBugs = bugs.some((b) => b.status !== "done" && b.status !== "archived");
     const pStyle = getProgressStyle(percent, hasOpenBugs);
@@ -208,7 +217,9 @@ export function renderCard(t, isLatestDone = false) {
     ? t.project_dir.replace(/^.*[\\/]projects[\\/]/, "demo/")
     : `demo/${t.project}`);
   const elapsed = taskElapsed(t);
-  const timeBadge = elapsed ? `<span class="task-card-time" title="Thời gian tổng">⏱ ${elapsed}</span>` : "";
+  const timeBadge = elapsed
+    ? `<span class="task-card-time" data-task-id="${escapeHtml(t.id)}" title="Thời gian chạy">⏱ ${elapsed}</span>`
+    : "";
   const canBlock = !["done", "archived", "blocked"].includes(t.status);
   const blockBtn = canBlock ? `<button class="btn-task-block" onclick="event.stopPropagation(); blockTask('${t.id}')" title="Dừng & Chuyển sang Blocked để kiểm tra">✕</button>` : "";
 

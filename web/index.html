@@ -14,15 +14,15 @@
     <script type="importmap">
       {
         "imports": {
-          "/static/js/main.js": "/static/js/main.js?v=80",
-          "/static/js/api.js": "/static/js/api.js?v=80",
-          "/static/js/state.js": "/static/js/state.js?v=80",
-          "/static/js/constants.js": "/static/js/constants.js?v=80",
-          "/static/js/components/board.js": "/static/js/components/board.js?v=80",
-          "/static/js/components/sidebar.js": "/static/js/components/sidebar.js?v=80",
-          "/static/js/components/modal.js": "/static/js/components/modal.js?v=80",
-          "/static/js/components/chat.js": "/static/js/components/chat.js?v=80",
-          "/static/js/components/settings.js": "/static/js/components/settings.js?v=80"
+          "/static/js/main.js": "/static/js/main.js?v=86",
+          "/static/js/api.js": "/static/js/api.js?v=86",
+          "/static/js/state.js": "/static/js/state.js?v=86",
+          "/static/js/constants.js": "/static/js/constants.js?v=86",
+          "/static/js/components/board.js": "/static/js/components/board.js?v=86",
+          "/static/js/components/sidebar.js": "/static/js/components/sidebar.js?v=86",
+          "/static/js/components/modal.js": "/static/js/components/modal.js?v=86",
+          "/static/js/components/chat.js": "/static/js/components/chat.js?v=86",
+          "/static/js/components/settings.js": "/static/js/components/settings.js?v=86"
         }
       }
     </script>
@@ -533,6 +533,70 @@
               style="margin-top: 10px"
             ></p>
           </div>
+
+          <div class="panel-section" style="margin-top: 28px">
+            <div class="panel-title">Project đang focus</div>
+            <p class="settings-hint">
+              Project đang chọn trên sidebar. Gắn link MCP riêng cho project.
+              Nên dùng <b>Builtin</b> (<code>/mcp/figma</code>) — dùng Figma PAT + Vision,
+              không cần OAuth. Remote <code>mcp.figma.com</code> thường 401 với client tùy chỉnh.
+            </p>
+            <div
+              id="focus-project-card"
+              class="settings-hint"
+              style="
+                margin: 12px 0;
+                padding: 12px 14px;
+                border-radius: 10px;
+                background: rgba(56, 189, 248, 0.08);
+                border: 1px solid rgba(56, 189, 248, 0.22);
+              "
+            >
+              Chưa chọn project.
+            </div>
+            <form
+              class="token-form"
+              id="focus-project-mcp-form"
+              style="flex-wrap: wrap"
+            >
+              <input
+                type="url"
+                id="focus-project-mcp-input"
+                placeholder="vd: http://127.0.0.1:8600/mcp/figma"
+                style="flex: 1; min-width: 240px"
+              />
+              <button type="submit" id="focus-project-mcp-save">Lưu MCP</button>
+              <button
+                type="button"
+                id="focus-project-mcp-builtin"
+                class="btn-secondary"
+                title="Gắn MCP builtin Orchestrator (Figma PAT + Vision)"
+              >
+                Builtin
+              </button>
+              <button
+                type="button"
+                id="focus-project-mcp-test"
+                class="btn-secondary"
+                title="Thử list tools"
+              >
+                Test
+              </button>
+              <button
+                type="button"
+                id="focus-project-mcp-clear"
+                class="btn-secondary"
+                title="Xóa link MCP của project này"
+              >
+                Xóa
+              </button>
+            </form>
+            <p
+              class="settings-hint"
+              id="focus-project-mcp-status"
+              style="margin-top: 10px"
+            ></p>
+          </div>
         </div>
       </div>
     </div>
@@ -737,7 +801,7 @@
       </div>
     </div>
 
-    <script type="module" src="/static/js/main.js?v=80"></script>
+    <script type="module" src="/static/js/main.js?v=86"></script>
     <script type="module">
       // Bắt lỗi import graph (export mismatch do Chrome cache module cũ)
       import("/static/js/main.js").catch((e) => {

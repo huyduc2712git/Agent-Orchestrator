@@ -31,9 +31,14 @@ export function formatTime(iso) {
 }
 
 export function taskElapsed(t) {
-  if (!t.created_at) return "";
+  if (!t || !t.created_at) return "";
   const start = new Date(t.created_at).getTime();
-  const end = t.updated_at ? new Date(t.updated_at).getTime() : Date.now();
+  if (Number.isNaN(start)) return "";
+  // Task đang chạy → đếm realtime đến hiện tại (không khóa theo updated_at)
+  const active = ["in_progress", "testing", "review"].includes(t.status);
+  const end = active
+    ? Date.now()
+    : (t.updated_at ? new Date(t.updated_at).getTime() : Date.now());
   const diffMs = Math.max(0, end - start);
   const min = Math.floor(diffMs / 60000);
   if (min < 60) return `${min}m`;

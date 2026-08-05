@@ -47,6 +47,12 @@ async def get_settings():
         ],
         "projects_root": settings.effective_projects_root(),
         "projects_root_custom": settings.projects_root(),
+        "active_project": settings.active_project(),
+        "active_project_detail": (
+            settings.get_project(settings.active_project())
+            if settings.active_project()
+            else None
+        ),
         "llm_tools": tools,
         "role_models": settings.role_models(),
         "role_labels": settings.ROLE_LABELS,
@@ -265,3 +271,61 @@ async def put_projects_root(body: ProjectsRootIn):
         "projects_root": root,
         "projects_root_custom": settings.projects_root(),
     }
+
+
+class ProjectMcpIn(BaseModel):
+    mcp_url: str = ""
+    slug: str = ""  # mặc định = active_project
+
+
+@router.put("/api/settings/project-mcp")
+async def put_project_mcp(body: ProjectMcpIn):
+    """Lưu link MCP cho project đang focus (hoặc slug chỉ định)."""
+    slug = (body.slug or "").strip() or settings.active_project()
+    if not slug:
+        return JSONResponse(
+            {"error": "Chưa có project đang focus — chọn project trên sidebar trước."},
+            status_code=400,
+        )
+    if not settings.get_project(slug):
+        return JSONResponse({"error": f"Project `{slug}` không tồn tại"}, status_code=404)
+    p = settings.set_project_mcp_url(slug, body.mcp_url)
+    return {"ok": True, "project": p, "active_project": settings.active_project()}
+
+
+@router.post("/api/settings/project-mcp/test")
+async def test_project_mcp(body: ProjectMcpIn):
+    """Thử kết nối MCP (list tools)."""
+    from .. import config
+    from ..mcp import McpError, mcp_list_tools
+
+    slug = (body.slug or "").strip() or settings.active_project()
+    url = (body.mcp_url or "").strip()
+    token = ""
+    if not url and slug:
+        proj = settings.get_project(slug) or {}
+        url = (proj.get("mcp_url") or "").strip()
+        token = (proj.get("mcp_token") or "").strip()
+    if not url:
+        url = f"{config.BASE_URL}/mcp/figma"
+    try:
+        tools = mcp_list_tools(url, token=token)
+        return {
+            "ok": True,
+            "mcp_url": url,
+            "tools": [t.get("name") for t in tools],
+            "count": len(tools),
+        }
+    except McpError as e:
+        return JSONResponse({"ok": False, "mcp_url": url, "error": str(e)}, status_code=400)
+    except Exception as e:
+        return JSONResponse(
+            {"ok": False, "mcp_url": url, "error": f"{type(e).__name__}: {e}"},
+            status_code=400,
+        )
+
+
+@router.get("/api/settings/mcp-builtin-url")
+async def mcp_builtin_url():
+    from .. import config
+    return {"ok": True, "mcp_url": f"{config.BASE_URL}/mcp/figma"}

@@ -14,7 +14,8 @@ from ..board import store
 log = logging.getLogger("api.preview")
 router = APIRouter(tags=["preview"])
 
-_API_BASE_CACHE: dict[str, tuple[float, str]] = {}  # legacy; probe đã tắt — chỉ clear
+_API_BASE_CACHE: dict[str, tuple[float, str]] = {}
+_API_PROBE_PORTS = (3000, 3001, 8000, 8080, 5000, 5173)
 _HOP_HEADERS = {
     "host", "content-length", "transfer-encoding", "connection",
     "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers", "upgrade",
@@ -85,11 +86,7 @@ def _rewrite_preview_html(html: str, project: str) -> str:
 
 def _find_preview_file(serve_root: Path, project_dir: Path, rel_path: str) -> Path | None:
     rel = rel_path.strip("/") or "index.html"
-    # FIX bug-7028: the public preview host serves ONLY the preview root
-    # (dist/ for built projects, project dir otherwise). The old project_dir
-    # fallback exposed raw source (src/**, vite.config.ts, tsconfig.json) and
-    # QA artifacts (probe-*.txt, *.log) of the whole repo on the public host.
-    for root in (serve_root,):
+    for root in (serve_root, project_dir):
         try:
             root_res = root.resolve()
             cand = (root / rel).resolve()
@@ -104,8 +101,7 @@ def _find_preview_file(serve_root: Path, project_dir: Path, rel_path: str) -> Pa
 
     fname = Path(rel).name
     matches: list[Path] = []
-    # FIX bug-7028: rglob fallback must stay inside the preview root only.
-    for root in (serve_root,):
+    for root in (serve_root, project_dir):
         if root.is_dir():
             matches.extend(root.rglob(fname))
     if matches:
@@ -129,43 +125,25 @@ def _find_preview_file(serve_root: Path, project_dir: Path, rel_path: str) -> Pa
 # package.json etc. Preview is meant for public static assets (index.html,
 # dist, .css/.js/.png/...) only, so requests are checked against a
 # deny-list of internal extensions/names BEFORE any file resolution.
-# FIX bug-7028: the public host is for BUILD-OUTPUT assets only. Anything that
-# is not a static browser asset (TypeScript source, configs, QA/probe
-# artifacts, logs, secrets, manifests, dependency/VCS dirs) is refused.
-_PREVIEW_ALLOW_EXT = frozenset({
-    ".html", ".htm", ".js", ".css", ".svg", ".png", ".jpg", ".jpeg", ".gif",
-    ".webp", ".avif", ".ico", ".bmp", ".woff", ".woff2", ".ttf", ".eot",
-    ".otf", ".mp4", ".webm", ".mp3", ".ogg", ".wav", ".json", ".webmanifest",
-})
 _PREVIEW_DENY_EXT = frozenset({
     ".cjs", ".mjs", ".log", ".py", ".pyc", ".pem", ".key", ".p12", ".pfx",
-    ".lock", ".bak", ".sql", ".sqlite", ".sqlite3", ".db", ".ts", ".tsx",
-    ".jsx", ".mts", ".cts", ".map", ".txt", ".md", ".yml", ".yaml", ".toml",
-    ".ini", ".cfg", ".conf", ".env", ".crt", ".cer", ".tsbuildinfo",
+    ".lock", ".bak", ".sql", ".sqlite", ".sqlite3", ".db",
 })
 _PREVIEW_DENY_FILES = frozenset({
     "package.json", "package-lock.json", "npm-shrinkwrap.json",
     "yarn.lock", "pnpm-lock.yaml", "verify.txt", "ping_check.txt",
 })
-# raw source / QA-artifact dirs are NEVER public (only the dist/ copy of
-# public/ assets is served via the preview root)
-_PREVIEW_DENY_DIRS = ("node_modules", ".git", ".svn", ".hg", "src", "public", "qa-shots", "coverage")
+_PREVIEW_DENY_DIRS = ("node_modules", ".git", ".svn", ".hg")
 
 
 def _is_public_preview_asset(rel_path: str) -> bool:
     """Allow-list for the public static preview host.
 
-    FIX bug-7028 (source disclosure): the old deny-list only blocked a handful
-    of extensions/names (.cjs/.log/package.json/...), so src/**, vite.config.ts,
-    tsconfig.json and probe-*.txt leaked as 200 on the public host. Now a strict
-    allow-list of BUILD-OUTPUT asset extensions is required, and raw-source /
-    config / QA-artifact paths are refused with 403 even before file lookup.
     Returns False for anything that is not a public static asset: backend
-    source (server.cjs), TypeScript source (src/**), configs (vite.config.ts,
-    tsconfig*.json), QA/probe artifacts (probe-*.txt, qa-*, *.log), manifests
-    (package.json), dotfiles/secrets (.env*) and dependency/VCS dirs
-    (node_modules, .git). Returns True for index.html and ordinary static
-    build-output assets only.
+    source (server.cjs), runtime logs (server*.log), verify artifacts
+    (verify.txt, ping_check.txt), manifests (package.json), dotfiles/secrets
+    (.env*) and dependency/VCS dirs (node_modules, .git). Returns True for
+    index.html and ordinary static assets.
     """
     p = rel_path.strip("/") or ""
     if not p:
@@ -183,18 +161,8 @@ def _is_public_preview_asset(rel_path: str) -> bool:
         return False
     if name in _PREVIEW_DENY_FILES:
         return False
-    # FIX bug-7028: strict allow-list — only build-output asset extensions.
-    if ext not in _PREVIEW_ALLOW_EXT:
-        return False
-    # config / QA artifacts must stay private even with an allowed extension
-    low = name.lower()
-    if low.startswith("probe") or low.startswith("qa-") or low.startswith("check-"):
-        return False
-    if low.startswith("server.") or low.startswith("verify"):
-        return False
-    if re.match(r"^(tsconfig|vite|webpack|rollup|babel|jest|vitest|postcss|tailwind|eslint|prettier|vercel|firebase|netlify)", low):
-        return False
-    if low.endswith((".config.json", ".config.js", ".config.ts", ".config.mjs")):
+    # backend runtime artifacts (server.cjs, server.log, verify.txt, ...)
+    if name.startswith("server.") or name.startswith("verify"):
         return False
     return True
 
@@ -278,22 +246,32 @@ def _project_from_referer(referer: str) -> str:
 
 
 async def _resolve_project_api_base(slug: str) -> str | None:
-    """Chỉ dùng api_base đã cấu hình cho đúng project.
-
-    Không còn auto-probe cổng 3000/8000/… — probe hay gắn nhầm backend của
-    app khác (vd voxbeat \"Giai Điệu Việt\") vào preview ocr-dashboard →
-    /api/* trả HTML/JSON foreign → agent tạo bug cross-app giả (bug-5686).
-    Project SPA tĩnh không có backend: để trống api_base → proxy trả 502 JSON.
-    """
     if not slug:
         return None
     sp = settings.get_project(slug) or {}
     configured = (sp.get("api_base") or "").strip().rstrip("/")
     if configured:
         return configured
-    # Xóa cache probe cũ (nếu còn từ bản trước) để không tái dùng port nhầm
-    _API_BASE_CACHE.pop(slug, None)
-    return None
+
+    now = time.time()
+    hit = _API_BASE_CACHE.get(slug)
+    if hit and hit[0] > now:
+        return hit[1] or None
+
+    base_found = ""
+    async with httpx.AsyncClient(timeout=1.2) as client:
+        for port in _API_PROBE_PORTS:
+            base = f"http://127.0.0.1:{port}"
+            try:
+                r = await client.get(f"{base}/api/health")
+                if r.status_code < 500:
+                    base_found = base
+                    break
+            except Exception:
+                continue
+
+    _API_BASE_CACHE[slug] = (now + 60.0, base_found)
+    return base_found or None
 
 
 @router.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"])
@@ -306,15 +284,13 @@ async def proxy_project_api(path: str, request: Request):
         return JSONResponse({"error": "bad request: null byte in path"}, status_code=400)
     slug = _project_from_referer(request.headers.get("referer", ""))
     if not slug:
-        # Agent http_get thường không gửi Referer — dùng Active Project.
-        # An toàn vì không còn auto-probe port của app khác.
         slug = settings.active_project() or ""
     api_base = await _resolve_project_api_base(slug)
     if not api_base:
         return JSONResponse(
             {
-                "error": "project chưa cấu hình api_base — không proxy /api/* (tránh gắn nhầm backend app khác)",
-                "hint": "Settings → Projects → api_base (vd http://127.0.0.1:3000). SPA tĩnh không cần API thì để trống.",
+                "error": "không có backend API để proxy",
+                "hint": "Start app backend (vd :3000) hoặc set api_base cho project",
                 "project": slug or None,
             },
             status_code=502,
@@ -338,28 +314,6 @@ async def proxy_project_api(path: str, request: Request):
         await client.aclose()
         log.warning("API proxy %s -> %s failed: %s", path, api_base, e)
         return JSONResponse({"error": f"proxy failed: {e}", "target": url}, status_code=502)
-
-    # FIX bug-5686: API contract — /api/* must never return HTML to the
-    # browser. A text/html upstream response means we hit an SPA fallback
-    # (Vite dev server or an Express `app.get('*')` catch-all), i.e. the
-    # proxy selected the wrong target. Reject as 502 JSON instead of
-    # streaming a foreign app's index.html to the client.
-    upstream_ct = (resp.headers.get("content-type") or "").lower()
-    if "html" in upstream_ct:
-        await resp.aclose()
-        await client.aclose()
-        log.warning(
-            "API proxy /api/%s -> %s returned text/html (SPA fallback), rejecting",
-            path, api_base,
-        )
-        return JSONResponse(
-            {
-                "error": "backend returned HTML for API path (SPA fallback) - not a JSON API",
-                "path": f"/api/{path}",
-                "target": api_base,
-            },
-            status_code=502,
-        )
 
     out_headers = {
         k: v for k, v in resp.headers.items()

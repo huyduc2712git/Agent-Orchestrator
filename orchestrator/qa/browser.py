@@ -1,15 +1,55 @@
 """Headless browser: chụp screenshot live + kiểm tra CSS/render/console."""
 from __future__ import annotations
 
+import concurrent.futures
+import logging
 import re
+import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, TypeVar
+
+log = logging.getLogger("qa.browser")
 
 VIEWPORTS = {
     "desktop": {"width": 1440, "height": 900},
     "mobile": {"width": 375, "height": 812},
     "tablet": {"width": 768, "height": 1024},
 }
+
+T = TypeVar("T")
+
+
+def _prepare_windows_playwright_loop() -> None:
+    """Windows: Playwright sync cần ProactorEventLoop để spawn chromium.
+
+    Uvicorn/anyio đôi khi để WindowsSelectorEventLoopPolicy → sync_playwright
+    raise NotImplementedError trong _make_subprocess_transport.
+    """
+    if sys.platform != "win32":
+        return
+    import asyncio
+
+    try:
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    except Exception as e:
+        log.warning("Không set ProactorEventLoopPolicy: %s", e)
+    # Thread worker không nên giữ loop Selector cũ
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    except Exception:
+        pass
+
+
+def _run_playwright(fn: Callable[[], T], timeout: float = 120.0) -> T:
+    """Chạy Playwright sync trong thread riêng + Proactor (tránh NotImplementedError)."""
+
+    def _call() -> T:
+        _prepare_windows_playwright_loop()
+        return fn()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="pw") as pool:
+        return pool.submit(_call).result(timeout=timeout)
 
 
 def _rgb_css(rgb: str) -> str:
@@ -27,7 +67,10 @@ def _hex_from_rgb(rgb: str) -> str:
 
 
 def _launch_page(url: str, viewport: dict[str, int], wait_ms: int = 1500):
-    """Context manager: trả (browser, page). Caller phải đóng browser."""
+    """Context manager: trả (browser, page). Caller phải đóng browser.
+
+    Chỉ gọi từ trong `_run_playwright` (thread đã set Proactor).
+    """
     from playwright.sync_api import sync_playwright
 
     pw = sync_playwright().start()
@@ -74,31 +117,35 @@ def capture_screenshot(
         viewport = dict(VIEWPORTS.get(viewport_name, VIEWPORTS["desktop"]))
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    browser, page = _launch_page(url, viewport, wait_ms)
-    try:
-        if click_selector:
-            page.click(click_selector, timeout=10_000)
-            page.wait_for_timeout(800)
-        if scroll_y is not None:
-            page.evaluate(f"window.scrollTo(0, {int(scroll_y)})")
-            page.wait_for_timeout(500)
-        page.screenshot(path=str(output_path), full_page=full_page)
-        title = page.title()
-        final_url = page.url
-        errors = list(getattr(page, "_qa_console_errors", []))
-    finally:
-        _close(browser, page)
 
-    return {
-        "ok": True,
-        "path": str(output_path),
-        "url": url,
-        "final_url": final_url,
-        "title": title,
-        "viewport": viewport,
-        "full_page": full_page,
-        "console_errors": errors[:20],
-    }
+    def _do() -> dict[str, Any]:
+        browser, page = _launch_page(url, viewport, wait_ms)
+        try:
+            if click_selector:
+                page.click(click_selector, timeout=10_000)
+                page.wait_for_timeout(800)
+            if scroll_y is not None:
+                page.evaluate(f"window.scrollTo(0, {int(scroll_y)})")
+                page.wait_for_timeout(500)
+            page.screenshot(path=str(output_path), full_page=full_page)
+            title = page.title()
+            final_url = page.url
+            errors = list(getattr(page, "_qa_console_errors", []))
+        finally:
+            _close(browser, page)
+
+        return {
+            "ok": True,
+            "path": str(output_path),
+            "url": url,
+            "final_url": final_url,
+            "title": title,
+            "viewport": viewport,
+            "full_page": full_page,
+            "console_errors": errors[:20],
+        }
+
+    return _run_playwright(_do, timeout=120.0)
 
 
 _INSPECT_JS = """
@@ -146,102 +193,106 @@ def inspect_render(
 ) -> dict[str, Any]:
     """Kiểm tra render/CSS trên URL live. Trả bảng checks + verdict."""
     viewport = dict(VIEWPORTS.get(viewport_name, VIEWPORTS["desktop"]))
-    browser, page = _launch_page(url, viewport, wait_ms)
-    checks: list[dict[str, str]] = []
-    try:
-        if click_selector:
-            page.click(click_selector, timeout=10_000)
-            page.wait_for_timeout(800)
 
-        data = page.evaluate(_INSPECT_JS)
-        errors = list(getattr(page, "_qa_console_errors", []))
+    def _do() -> dict[str, Any]:
+        browser, page = _launch_page(url, viewport, wait_ms)
+        checks: list[dict[str, str]] = []
+        try:
+            if click_selector:
+                page.click(click_selector, timeout=10_000)
+                page.wait_for_timeout(800)
 
-        body_rgb = _rgb_css(data.get("body_bg", ""))
-        checks.append({
-            "check": "body background",
-            "value": body_rgb + (f" ({body_bg_hex})" if body_bg_hex else ""),
-            "verdict": "PASS" if (not body_bg_hex or _hex_from_rgb(data.get("body_bg", "")).lower() == body_bg_hex.lower()) else "FAIL",
-        })
+            data = page.evaluate(_INSPECT_JS)
+            errors = list(getattr(page, "_qa_console_errors", []))
 
-        h1 = data.get("h1")
-        if h1:
+            body_rgb = _rgb_css(data.get("body_bg", ""))
             checks.append({
-                "check": "h1 size/weight",
-                "value": f"{h1.get('size')} / {h1.get('weight')}",
-                "verdict": "PASS",
+                "check": "body background",
+                "value": body_rgb + (f" ({body_bg_hex})" if body_bg_hex else ""),
+                "verdict": "PASS" if (not body_bg_hex or _hex_from_rgb(data.get("body_bg", "")).lower() == body_bg_hex.lower()) else "FAIL",
             })
 
-        if brand_hex:
-            samples = data.get("brand_samples") or []
-            match = any(_hex_from_rgb(s.get("bg", "")).lower() == brand_hex.lower() for s in samples)
-            found = next((_hex_from_rgb(s.get("bg", "")) for s in samples if s.get("bg")), "")
+            h1 = data.get("h1")
+            if h1:
+                checks.append({
+                    "check": "h1 size/weight",
+                    "value": f"{h1.get('size')} / {h1.get('weight')}",
+                    "verdict": "PASS",
+                })
+
+            if brand_hex:
+                samples = data.get("brand_samples") or []
+                match = any(_hex_from_rgb(s.get("bg", "")).lower() == brand_hex.lower() for s in samples)
+                found = next((_hex_from_rgb(s.get("bg", "")) for s in samples if s.get("bg")), "")
+                checks.append({
+                    "check": "brand color element",
+                    "value": f"{found or 'not found'} (expect {brand_hex})",
+                    "verdict": "PASS" if match else "WARN",
+                })
+
+            promo_bg = data.get("promo_bg", "")
+            if promo_bg:
+                checks.append({
+                    "check": "promo/header bar bg",
+                    "value": _rgb_css(promo_bg),
+                    "verdict": "PASS",
+                })
+
+            inv = int(data.get("invisible_text", 0))
             checks.append({
-                "check": "brand color element",
-                "value": f"{found or 'not found'} (expect {brand_hex})",
-                "verdict": "PASS" if match else "WARN",
+                "check": "invisible text (color == bg)",
+                "value": f"{inv} elements",
+                "verdict": "PASS" if inv == 0 else "FAIL",
             })
 
-        promo_bg = data.get("promo_bg", "")
-        if promo_bg:
+            broken = int(data.get("broken_images", 0))
+            total = int(data.get("image_total", 0))
             checks.append({
-                "check": "promo/header bar bg",
-                "value": _rgb_css(promo_bg),
-                "verdict": "PASS",
+                "check": "broken images",
+                "value": f"{broken} / {total}",
+                "verdict": "PASS" if broken == 0 else "FAIL",
             })
 
-        inv = int(data.get("invisible_text", 0))
-        checks.append({
-            "check": "invisible text (color == bg)",
-            "value": f"{inv} elements",
-            "verdict": "PASS" if inv == 0 else "FAIL",
-        })
-
-        broken = int(data.get("broken_images", 0))
-        total = int(data.get("image_total", 0))
-        checks.append({
-            "check": "broken images",
-            "value": f"{broken} / {total}",
-            "verdict": "PASS" if broken == 0 else "FAIL",
-        })
-
-        checks.append({
-            "check": "browser console errors",
-            "value": "none" if not errors else "; ".join(errors[:3]),
-            "verdict": "PASS" if not errors else "FAIL",
-        })
-
-        if expect_selector:
-            count = page.locator(expect_selector).count()
             checks.append({
-                "check": f"selector '{expect_selector}' count",
-                "value": str(count),
-                "verdict": "PASS" if count >= expect_min_count else "FAIL",
+                "check": "browser console errors",
+                "value": "none" if not errors else "; ".join(errors[:3]),
+                "verdict": "PASS" if not errors else "FAIL",
             })
 
-        if click_selector and expect_selector:
-            checks.append({
-                "check": "tab/filter interaction",
-                "value": f"clicked '{click_selector}', found {page.locator(expect_selector).count()} items",
-                "verdict": "PASS" if page.locator(expect_selector).count() >= expect_min_count else "FAIL",
-            })
+            if expect_selector:
+                count = page.locator(expect_selector).count()
+                checks.append({
+                    "check": f"selector '{expect_selector}' count",
+                    "value": str(count),
+                    "verdict": "PASS" if count >= expect_min_count else "FAIL",
+                })
 
-        fail_count = sum(1 for c in checks if c["verdict"] == "FAIL")
-        warn_count = sum(1 for c in checks if c["verdict"] == "WARN")
-        overall = "FAIL" if fail_count else ("WARN" if warn_count else "PASS")
+            if click_selector and expect_selector:
+                checks.append({
+                    "check": "tab/filter interaction",
+                    "value": f"clicked '{click_selector}', found {page.locator(expect_selector).count()} items",
+                    "verdict": "PASS" if page.locator(expect_selector).count() >= expect_min_count else "FAIL",
+                })
 
-        return {
-            "ok": True,
-            "url": url,
-            "viewport": viewport,
-            "checks": checks,
-            "overall": overall,
-            "fail_count": fail_count,
-            "warn_count": warn_count,
-            "console_errors": errors[:20],
-            "text_sample": (data.get("visible_text_sample") or "")[:400],
-        }
-    finally:
-        _close(browser, page)
+            fail_count = sum(1 for c in checks if c["verdict"] == "FAIL")
+            warn_count = sum(1 for c in checks if c["verdict"] == "WARN")
+            overall = "FAIL" if fail_count else ("WARN" if warn_count else "PASS")
+
+            return {
+                "ok": True,
+                "url": url,
+                "viewport": viewport,
+                "checks": checks,
+                "overall": overall,
+                "fail_count": fail_count,
+                "warn_count": warn_count,
+                "console_errors": errors[:20],
+                "text_sample": (data.get("visible_text_sample") or "")[:400],
+            }
+        finally:
+            _close(browser, page)
+
+    return _run_playwright(_do, timeout=120.0)
 
 
 def compare_images(path_a: Path, path_b: Path, *, threshold: float = 0.92) -> dict[str, Any]:

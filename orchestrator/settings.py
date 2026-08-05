@@ -243,6 +243,24 @@ def get_project(slug: str) -> dict | None:
     return None
 
 
+def set_project_mcp_url(slug: str, mcp_url: str) -> dict | None:
+    """Lưu (hoặc xóa nếu rỗng) link MCP cho một project."""
+    slug = (slug or "").strip()
+    if not slug:
+        return None
+    url = (mcp_url or "").strip()
+    data = load()
+    for p in data.get("projects", []):
+        if p.get("slug") == slug:
+            if url:
+                p["mcp_url"] = url
+            else:
+                p.pop("mcp_url", None)
+            save(data)
+            return dict(p)
+    return None
+
+
 def remove_project(slug: str) -> bool:
     """Xóa project khỏi settings. Trả True nếu đã xóa."""
     data = load()
@@ -282,11 +300,24 @@ DEFAULT_SYSTEM_MODELS = {"deepseek-v4-flash-free", "nemotron-3-ultra-free", "mim
 
 
 def _seed_llm_from_env(data: dict) -> dict:
-    """Lần đầu: seed llm_tools + role_models từ .env nếu chưa có."""
+    """Lần đầu: seed llm_tools + role_models từ .env nếu chưa có.
+
+    Đồng bộ api_key từ LLM_API_KEY (.env) vào mọi tool cùng base_url OpenCode —
+    khi bạn đổi key trong .env rồi restart, Settings không còn giữ key cũ.
+    """
     tools = data.get("llm_tools") or []
     roles = data.get("role_models") or {}
 
     migrated = False
+    env_key = (config.LLM_API_KEY or "").strip()
+    env_base = (config.LLM_BASE_URL or "").rstrip("/").lower()
+    if env_key and env_base:
+        for t in tools:
+            t_base = (t.get("base_url") or "").rstrip("/").lower()
+            if t_base == env_base and (t.get("api_key") or "") != env_key:
+                t["api_key"] = env_key
+                migrated = True
+
     for t in tools:
         is_def = (t.get("model") in DEFAULT_SYSTEM_MODELS) or t.get("is_default", False)
         if t.get("is_default") != is_def:

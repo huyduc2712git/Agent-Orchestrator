@@ -1,6 +1,7 @@
 """Scheduler — Phase 3+4: chạy subtask khi dependency đã xong, không chờ đồng bộ."""
 import asyncio
 import logging
+import re
 from datetime import datetime, timezone
 
 from .. import config
@@ -11,6 +12,55 @@ from ..board.models import Task
 from . import orchestrator
 
 log = logging.getLogger("scheduler")
+
+_COMPLETION_RE = re.compile(
+    r"(✅\s*DONE\b|\bDONE\b.{0,40}bug-|"
+    r"ĐÃ\s*FIX|DA\s*FIX|ĐÃ\s*HOÀN\s*THÀNH|DA\s*HOAN\s*THANH|"
+    r"##\s*Tổng\s*kết|##\s*Tong\s*ket|"
+    r"toàn\s*bộ\s*yêu\s*cầu\s*fix\s*đã\s*được|"
+    r"fix\s*đã\s*được\s*triển\s*khai)",
+    re.I,
+)
+
+
+def _agent_reported_done(task_id: str) -> bool:
+    """True nếu worker từng báo DONE/ĐÃ FIX gần đây — tránh requeue sau reload."""
+    seen = 0
+    for ev in reversed(store.list_events(task_id)):
+        if ev.kind != "comment":
+            continue
+        if ev.agent in ("system", "conan", "operator"):
+            continue
+        seen += 1
+        if _COMPLETION_RE.search(ev.message or ""):
+            return True
+        if seen >= 8:  # chỉ xét vài comment worker mới nhất
+            break
+    return False
+
+
+def _finish_or_requeue(task: Task, *, reason: str) -> str:
+    """Đưa sang testing nếu đã có deliverable; ngược lại backlog. Trả status đã set."""
+    if _agent_reported_done(task.id):
+        if task.assignee in ("kid", "agasa"):
+            ok, app_reason = orchestrator.project_has_real_app(task.project_dir or "")
+            if not ok:
+                store.set_status(task.id, "backlog", "system")
+                store.add_event(
+                    task.id, "conan", "system",
+                    f"{reason} — agent báo DONE nhưng chưa có app ({app_reason}) → backlog.",
+                )
+                return "backlog"
+        store.set_status(task.id, "testing", "system")
+        store.add_event(
+            task.id, "conan", "system",
+            f"{reason} — đã có comment DONE/ĐÃ FIX → testing (không chạy lại từ đầu).",
+        )
+        log.info("%s %s → testing (%s, already DONE)", task.assignee, task.id, reason)
+        return "testing"
+    store.set_status(task.id, "backlog", "system")
+    store.add_event(task.id, "system", "system", f"{reason} → backlog để chạy tiếp.")
+    return "backlog"
 
 _in_flight: set[str] = set()
 _semaphore: asyncio.Semaphore | None = None
@@ -55,6 +105,26 @@ def _build_worker_prompt(task: Task) -> str:
               "Hoàn thành công việc, post_message deliverable, rồi tổng kết bằng text."]
 
     if task.assignee == "heiji":
+        # Checklist từng build sub của task cha
+        per_sub_lines: list[str] = []
+        if parent:
+            builders = [
+                t for t in store.list_tasks(parent_id=parent.id)
+                if t.assignee in ("kid", "agasa") and t.type != "bug"
+            ]
+            builders = sorted(builders, key=lambda t: (t.created_at or "", t.id))
+            if builders:
+                per_sub_lines = [
+                    "",
+                    "=== QA TỪNG BUILD SUB (bắt buộc — tuần tự theo kế hoạch) ===",
+                    "Duyệt LẦN LƯỢT từng sub dưới đây. Sub FAIL → create_bug_ticket với "
+                    "related_subtask_id = id sub đó (vd sub-2534). "
+                    "VERDICT PASS chỉ khi mọi sub PASS.",
+                ]
+                for i, b in enumerate(builders, 1):
+                    per_sub_lines.append(
+                        f"{i}. [{b.id}] {b.title} ({b.assignee}) — status={b.status}"
+                    )
         parts += [
             "",
             "=== VISUAL QA CHECKLIST (bắt buộc) ===",
@@ -69,15 +139,16 @@ def _build_worker_prompt(task: Task) -> str:
             "   Root cause thường: preview chỉ serve static, thiếu proxy/api_base. "
             "Hướng fix ghi rõ: (1) set project api_base + Orchestrator proxy /api, "
             "(2) hoặc rewrite FE gọi absolute API URL backend, (3) hoặc Vite proxy. "
-            "create_bug_ticket kèm repro + hướng fix (bắt buộc khi FAIL) — KHÔNG PASS khi còn lỗi. "
+            "create_bug_ticket(related_subtask_id=…, area=…, repro) khi FAIL — KHÔNG PASS khi còn lỗi. "
             "Conan không tạo bug; chỉ Final Review sau khi bạn PASS.",
             "2. figma_get nếu description có link Figma — lấy màu/font/layout spec.",
             "3. screenshot_url: desktop top + mobile top + ít nhất 1 interaction shot (tab click).",
             "4. inspect_render: chạy CSS/RENDER VERIFICATION table (brand_hex, body_bg_hex từ Figma nếu có).",
             "5. compare_image nếu có file reference PNG trong project (vd mockup/, reference/).",
-            "6. post_message 'Visual QA Report' với screenshot view_url links + bảng checks "
-            "+ bảng API checks (URL → status) gồm cả same-origin.",
+            "6. post_message 'Visual QA Report' với bảng kết quả TỪNG build sub (PASS/FAIL) "
+            "+ screenshot view_url + bảng API checks (same-origin).",
             "7. VERDICT: PASS hoặc VERDICT: FAIL — kèm evidence, không khẳng định suông.",
+            *per_sub_lines,
         ]
     if "git-repo" in (task.tags or []) or "github" in (task.tags or []) or "gitlab" in (task.tags or []):
         parts += [
@@ -145,8 +216,13 @@ async def _run_worker(task: Task) -> None:
             )
             curr = store.get_task(task.id)
             parent = store.get_task(task.parent_id) if task.parent_id else None
-            if (curr and curr.status in ("blocked", "failed", "archived")) or (parent and parent.status in ("blocked", "failed", "archived")):
-                log.info("Worker %s kết thúc sớm cho %s vì status/parent status đã chuyển sang %s", task.assignee, task.id, curr.status if curr else "blocked")
+            if (curr and curr.status in ("blocked", "failed", "archived", "testing", "done")) or (
+                parent and parent.status in ("blocked", "failed", "archived")
+            ):
+                log.info(
+                    "Worker %s kết thúc sớm cho %s vì status/parent đã là %s",
+                    task.assignee, task.id, curr.status if curr else "?",
+                )
                 return
             # Marker do runtime gắn khi hết vòng lặp — không dò cụm từ tự do của LLM
             ITERATION_LIMIT_MARKER = "[ITERATION_LIMIT_REACHED]"
@@ -156,10 +232,43 @@ async def _run_worker(task: Task) -> None:
                 display = result[len(ITERATION_LIMIT_MARKER):].lstrip()
             store.add_event(task.id, task.assignee, "comment", display[:4000])
 
-            if hit_limit:
-                log.warning("Worker %s chưa hoàn tất %s do chạm max iterations — requeuing to backlog", task.assignee, task.id)
-                store.set_status(task.id, "backlog", task.assignee)
-                store.add_event(task.id, "system", "system", "Chạm giới hạn vòng lặp tool — tự động đưa về backlog để Agent chạy tiếp lượt sau.")
+            # Đã post DONE trong vòng này (hoặc trước reload) → testing, kể cả khi hit_limit
+            if _agent_reported_done(task.id) and not (
+                task.assignee in ("kid", "agasa")
+                and not orchestrator.project_has_real_app(task.project_dir or "")[0]
+            ):
+                store.set_status(task.id, "testing", task.assignee)
+                if hit_limit:
+                    store.add_event(
+                        task.id, "conan", "system",
+                        "Chạm giới hạn vòng lặp nhưng đã có DONE → testing.",
+                    )
+            elif hit_limit:
+                log.warning("Worker %s chạm max iterations trên %s", task.assignee, task.id)
+                _finish_or_requeue(
+                    task,
+                    reason="Chạm giới hạn vòng lặp tool",
+                )
+            elif task.assignee in ("kid", "agasa"):
+                # Không cho vào testing/QA nếu project vẫn trống/stub (Kid nói xong nhưng chưa code)
+                ok, reason = orchestrator.project_has_real_app(task.project_dir or "")
+                if not ok:
+                    log.warning(
+                        "Worker %s '%s' kết thúc nhưng deliverable chưa có (%s) — requeue backlog",
+                        task.assignee, task.id, reason,
+                    )
+                    store.set_status(task.id, "backlog", task.assignee)
+                    store.add_event(
+                        task.id, "conan", "system",
+                        f"Chưa chuyển QA: {reason}. Làm lại — scaffold/build tới khi có source thật trên đĩa.",
+                    )
+                    store.add_chat(
+                        "conan",
+                        f"⏳ {task.id} ({task.title}): Kid/Agasa báo xong nhưng project chưa có app "
+                        f"({reason}) — giữ backlog, chưa vào QA.",
+                    )
+                else:
+                    store.set_status(task.id, "testing", task.assignee)
             else:
                 store.set_status(task.id, "testing", task.assignee)
         except Exception as e:
@@ -186,9 +295,40 @@ async def _run_worker(task: Task) -> None:
 def auto_recover_stuck_and_blocked_tasks() -> None:
     """Conan Auto-Recovery Patrol — Quét định kỳ mỗi 2 phút:
     1. Reset subtask/task bị in_progress mà không nằm trong _in_flight (bị kẹt tiến trình).
+    1b. Task nằm trong _in_flight nhưng im quá lâu (worker treo LLM) → bỏ in_flight + requeue.
     2. Tự động rerun subtask/task bị blocked (tối đa 3 lần retry).
     """
     now_utc = datetime.now(timezone.utc)
+    STALE_IN_FLIGHT_SEC = 360  # 6 phút không cập nhật → coi worker chết
+
+    # 1b. Worker treo nhưng vẫn chiếm _in_flight → scheduler không bao giờ spawn lại
+    stale_ids = []
+    for tid in list(_in_flight):
+        t = store.get_task(tid)
+        if not t:
+            _in_flight.discard(tid)
+            continue
+        try:
+            updated_dt = datetime.fromisoformat(t.updated_at)
+            age = (now_utc - updated_dt).total_seconds()
+        except Exception:
+            age = 0
+        if age > STALE_IN_FLIGHT_SEC:
+            stale_ids.append(tid)
+    for tid in stale_ids:
+        t = store.get_task(tid)
+        log.warning(
+            "Conan Auto-Recovery: stale _in_flight %s (im %.0fs) — discard + requeue",
+            tid, STALE_IN_FLIGHT_SEC,
+        )
+        _in_flight.discard(tid)
+        if t and t.status == "in_progress":
+            dest = _finish_or_requeue(t, reason="Auto-Recovery: worker treo / không heartbeat")
+            if dest == "backlog":
+                store.add_chat(
+                    "conan",
+                    f"🔄 Conan Auto-Recovery: {tid} ({t.title}) worker treo quá lâu — chạy lại từ backlog.",
+                )
 
     # 1. Quét toàn bộ task/subtask in_progress bị kẹt không có worker thread thực thi
     in_prog = store.list_tasks(status=["in_progress"])
@@ -210,10 +350,18 @@ def auto_recover_stuck_and_blocked_tasks() -> None:
 
                 updated_dt = datetime.fromisoformat(t.updated_at)
                 if (now_utc - updated_dt).total_seconds() > 120:
-                    log.info("Conan Auto-Recovery: Resetting stuck in_progress task %s (%s) -> backlog", t.id, t.title)
-                    store.add_event(t.id, "conan", "system", "Conan Auto-Recovery: Phát hiện task bị kẹt tiến trình -> Tự động khôi phục chạy lại.")
-                    store.set_status(t.id, "backlog", "conan")
-                    store.add_chat("conan", f"🔄 Conan Auto-Recovery: Tự động kích hoạt lại {t.id} ({t.title}) do bị dừng tiến trình.")
+                    log.info("Conan Auto-Recovery: stuck in_progress %s (%s)", t.id, t.title)
+                    dest = _finish_or_requeue(t, reason="Auto-Recovery: task kẹt tiến trình / reload")
+                    if dest == "backlog":
+                        store.add_chat(
+                            "conan",
+                            f"🔄 Conan Auto-Recovery: kích hoạt lại {t.id} ({t.title}) do bị dừng tiến trình.",
+                        )
+                    else:
+                        store.add_chat(
+                            "conan",
+                            f"✅ {t.id}: agent đã báo DONE trước khi kẹt/reload — chuyển testing, không chạy lại.",
+                        )
             except Exception:
                 pass
 
@@ -358,8 +506,11 @@ async def scheduler_loop() -> None:
                     log.info("Parent task %s is %s — setting orphaned subtask %s -> %s", ot.parent_id, parent.status, ot.id, parent.status)
                     store.set_status(ot.id, parent.status, "system")
             else:
-                log.info("Resetting orphaned in_progress subtask %s -> backlog for auto-resumption", ot.id)
-                store.set_status(ot.id, "backlog", "system")
+                dest = _finish_or_requeue(ot, reason="Server reload — orphan in_progress")
+                log.info(
+                    "Orphaned in_progress subtask %s -> %s",
+                    ot.id, dest,
+                )
     except Exception:
         log.exception("Failed to reset orphaned in_progress tasks")
 
@@ -396,6 +547,16 @@ async def scheduler_loop() -> None:
                         elif parent.status in ("blocked", "failed"):
                             store.set_status(t.id, parent.status, "system")
                         continue
+                    # Critic (QA/Security/Pentest) không chạy khi còn build sub đang làm
+                    if t.assignee in ("heiji", "akai", "amuro", "haibara"):
+                        siblings = store.list_tasks(parent_id=t.parent_id)
+                        busy_builders = [
+                            s for s in siblings
+                            if s.assignee in ("kid", "agasa") and s.type != "bug"
+                            and s.status in ("backlog", "in_progress", "blocked")
+                        ]
+                        if busy_builders:
+                            continue
                 if not store.deps_satisfied(t.id):
                     continue
                 _in_flight.add(t.id)

@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+import re
 
 from .. import config, llm
 from ..board import store
@@ -10,6 +11,13 @@ from .tools import ToolContext, schemas_for
 
 log = logging.getLogger("runtime")
 
+# Model hay "gọi tool" bằng markdown thay vì tool_calls JSON — bắt và ép gọi thật
+_FAKE_TOOL_RE = re.compile(
+    r"\[(list_dir|read_file|write_file|run_command|http_get|post_message|git_status|"
+    r"create_bug_ticket|search_files|figma_get|mcp_call|screenshot_url)\s*\(",
+    re.I,
+)
+
 
 def _sanitize_assistant(msg: dict) -> dict:
     """Bỏ reasoning_content và tool_calls=null trước khi đưa lại vào history."""
@@ -17,6 +25,19 @@ def _sanitize_assistant(msg: dict) -> dict:
     if msg.get("tool_calls"):
         clean["tool_calls"] = msg["tool_calls"]
     return clean
+
+
+def _looks_like_fake_tools(text: str) -> bool:
+    if not text:
+        return False
+    if _FAKE_TOOL_RE.search(text):
+        return True
+    if "```" in text and any(
+        k in text.lower()
+        for k in ("run_command", "write_file", "list_dir", "npm create", "npm install")
+    ):
+        return True
+    return False
 
 
 async def run_agent(
@@ -72,6 +93,21 @@ async def run_agent(
         tool_calls = msg.get("tool_calls") or []
         if not tool_calls:
             final = (msg.get("content") or "").strip()
+            # Builder viết [run_command(...)] trong text thay vì gọi tool → ép thử lại
+            if final and _looks_like_fake_tools(final) and iteration < max_iterations:
+                log.warning(
+                    "[%s/%s] Model mô tả tool trong text, không có tool_calls — nudge",
+                    agent_name, task.id,
+                )
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "SAI CÁCH: bạn chỉ viết tên tool trong text/markdown, hệ thống KHÔNG chạy. "
+                        "Bắt buộc gọi tool thật qua tool_calls (list_dir, run_command, write_file…). "
+                        "Không được báo xong khi chưa tạo file trên đĩa. Hãy gọi tool ngay."
+                    ),
+                })
+                continue
             if final:
                 return final
             # model trả rỗng không tool call — nhắc nó tổng kết

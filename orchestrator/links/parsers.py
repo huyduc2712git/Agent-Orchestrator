@@ -147,7 +147,8 @@ class FigmaParser(LinkParser):
         link = parsed.get("url", "")
         return (
             f"Figma: {link}. Dùng figma_get với link này TRƯỚC KHI code "
-            "(layout, kích thước, mã màu, text, font) và bám sát dữ liệu đó."
+            "(layout, kích thước, mã màu, text, font). "
+            "Nếu tool trả VISION fallback do rate-limit: code theo mô tả đó, không spam figma_get."
         )
 
     def steer_qa(self, parsed: dict[str, Any]) -> str:

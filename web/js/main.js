@@ -1,6 +1,6 @@
 /* Agent Orchestrator — Main Application Entry Point */
 
-import { state, $, updateFooterProject } from "./state.js";
+import { state, $, updateFooterProject, taskElapsed } from "./state.js";
 import { loadBoard, loadProjects, blockTask, selectProject } from "./api.js";
 import { renderBoard } from "./components/board.js";
 import { renderSidebar, switchView, goChat, notifyTab } from "./components/sidebar.js";
@@ -55,11 +55,14 @@ function connectWS() {
 
 function startDurationTicker() {
   setInterval(() => {
-    const elapsedBadges = document.querySelectorAll(".task-card-time");
-    elapsedBadges.forEach((el) => {
-      // Re-render tick if needed
+    document.querySelectorAll(".task-card-time[data-task-id]").forEach((el) => {
+      const t = state.tasks.get(el.dataset.taskId);
+      if (!t) return;
+      if (!["in_progress", "testing", "review"].includes(t.status)) return;
+      const elapsed = taskElapsed(t);
+      if (elapsed) el.textContent = `⏱ ${elapsed}`;
     });
-  }, 10000);
+  }, 15000);
 }
 
 function initEvents() {

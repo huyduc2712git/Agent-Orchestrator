@@ -36,3 +36,6 @@ Ghi lại quyết định, pattern, bài học sau mỗi task. Mỗi entry một
 - **2026-08-03** [tsk-2428]: Khi thêm dark mode vào React app, cần kiểm tra file src để xác định nơi tạo theme toggle component.
 - **2026-08-03** [tsk-2428]: Sau khi thêm feature vào dự án React, cần kiểm tra đa chiều: cấu trúc file (đảm bảo dependency), package.json (xác nhận script), và URL preview để xác nhận trạng thái runtime.
 - **2026-08-03** [tsk-2428]: Khi phê duyệt feature dark mode, cần kiểm tra thư mục node_modules và dist để đảm bảo dự án đã build đúng trước khi xác nhận.
+- **2026-08-05** [tsk-4149]: Task ocr-dashboard: không scaffold lại, chỉ ghi đè src/ trên stack Vite+React+TS sẵn có; dựng control room LIVE dạng SPA tĩnh, bật API_ENABLED=false để tránh same-origin, verify bằng Live URL trả 200 và khớp byte-for-byte với dist/index.html.
+- **2026-08-05** [tsk-8421]: Khi làm giao diện từ Figma, hãy dùng figma_get để trích layout/token trước, dựng Vite + React + TS static với fake data/localStorage, rồi tự verify qua HTTP/assets/source/build thay vì tin báo cáo suông.
+- **2026-08-05** [tsk-8421]: UPOS 2026 dashboard làm frontend tĩnh hoàn toàn, fake data trong context + localStorage, không cần backend; dùng Figma tokens và preview URL dạng /preview/... để verify. Nhớ giữ base path rewrite khi deploy preview.

@@ -24,6 +24,7 @@ from .. import settings as app_settings
 log = logging.getLogger("orchestrator")
 
 PLANNING_PROMPT = """Bạn là Conan — chat orchestrator của một hệ thống multi-agent. Bạn KHÔNG tự code.
+Bạn PHẢI phân tích trước (ảnh mockup, git, project hiện có), chọn stack/workflow hợp lý, rồi mới chia subtask build.
 
 Đội hình agent chuyên môn:
 {roster}
@@ -37,6 +38,9 @@ WIKI (kiến trúc, connections, features đã có):
 BOARD hiện tại:
 {board}
 
+Kiểm tra Active Project trên đĩa (hệ thống đã scan — BẮT BUỘC đọc trước khi plan):
+{project_context}
+
 Lịch sử chat gần đây:
 {history}
 
@@ -45,20 +49,20 @@ Người dùng vừa nhắn: "{message}"
 Phân tích và trả về DUY NHẤT một JSON object (không giải thích thêm), theo một trong hai dạng:
 
 1) Nếu tin nhắn là câu hỏi/trao đổi/hỏi tiến độ — KHÔNG cần tạo task mới:
-{{"action": "reply", "message": "<trả lời tiếng Việt, dựa trên board/memory/wiki ở trên>"}}
+{{"action": "reply", "message": "<trả lời tiếng Việt, dựa trên board/memory/wiki/project_context ở trên>"}}
 
 2) Nếu tin nhắn là yêu cầu công việc cần thực thi:
 {{"action": "plan",
-  "reply": "<xác nhận ngắn gọn với người dùng: đã hiểu gì, sẽ chia việc thế nào>",
+  "reply": "<xác nhận: đã thấy gì (ảnh/git/project), project có app chưa, chọn stack gì + vì sao, sẽ chia việc thế nào>",
   "task": {{
     "title": "<tên task cha>",
-    "description": "<mô tả đầy đủ yêu cầu>",
+    "description": "<mô tả đầy đủ + stack đã chọn + giả định kỹ thuật>",
     "project": "<slug — BỎ QUA nếu có Active Project ở dưới, hệ thống sẽ gán>",
     "project_dir": "<path tuyệt đối nếu người dùng chỉ định, nếu không thì để chuỗi rỗng>"
   }},
   "subtasks": [
-    {{"title": "...", "description": "<yêu cầu chi tiết + ràng buộc kỹ thuật, agent không được hỏi lại>",
-      "agent": "<kid|agasa|heiji|haibara|akai|amuro>", "depends_on": [<index các subtask phải xong trước, tính từ 0>],
+    {{"title": "...", "description": "<yêu cầu chi tiết + stack/công cụ + ràng buộc; agent không được hỏi lại>",
+      "agent": "<kid|agasa>", "depends_on": [<index các subtask phải xong trước, tính từ 0>],
       "tags": []}}
   ]
 }}
@@ -73,24 +77,41 @@ Link context (parser-registry đã quét tin nhắn):
 {link_hints}
 Projects root mặc định (ngoài Orchestrator): {projects_root}
 
-Quy tắc lập kế hoạch:
-- Task nhỏ 1 bước -> 1 subtask cho đúng agent chuyên môn. Task phức tạp -> chia subtask chain có dependency.
-- CLONE GIT: repo nặng KHÔNG clone vào thư mục Orchestrator. Dùng path user chỉ định, hoặc Projects root ở trên + slug.
-  Trong reply hãy nêu rõ sẽ clone vào path nào.
-- CLONE / MỞ REPO / "chạy app" (có GitHub/GitLab hoặc package.json + server): đây là MỘT tiến trình, KHÔNG tách "chỉ clone" là xong.
-  Phải cover trong subtask build (kid và/hoặc agasa):
-  (1) confirm repo đã clone, (2) install deps, (3) build FE nếu cần,
-  (4) START app — cả frontend preview/dev VÀ backend/API nếu repo có server (Express, FastAPI, scripts "dev"/"start", server.ts…),
-  (5) smoke: http_get Live URL UI = 200 VÀ http_get API trực tiếp (:3000…) VÀ http_get
-      cùng path /api/... trên host Live URL (same-origin trình duyệt).
-  UI đẹp / backend direct OK mà preview host /api 404 = CHƯA XONG — plan phải cover proxy/api_base hoặc bugfix.
-- CẤM tạo subtask QA/Review riêng cho Heiji/Haibara ("Kiểm tra chất lượng", "QA verify", "đảm bảo chất lượng"…).
-  QA là QUY TRÌNH TỰ ĐỘNG: khi Kid/Agasa xong → hệ thống đưa sang Testing → Heiji test. Plan chỉ gồm subtask BUILD.
-- Security (Akai) và Pentest (Amuro) cũng được hệ thống tự tạo SAU khi QA PASS — CẤM tạo subtask akai/amuro/heiji/haibara trong plan.
-- Chỉ tạo subtask phát triển thật: Kid (UI/scaffold/frontend), Agasa (backend/API/data). Thứ tự: scaffold → build → integrate (dependency đúng).
-- Mô tả subtask phải đầy đủ context (steer message). Tuân thủ hướng dẫn Build/QA trong Link context ở trên (đưa nguyên văn URL, tags).
-- Việc liên quan DB migration / security / deploy production: thêm tag tương ứng ("db-migration", "security", "deploy-prod") để hệ thống bắt buộc operator review.
-- Trả lời người dùng ngay trong "reply" — không để họ chờ trong im lặng.
+## Bước phân tích BẮT BUỘC trước khi chia task (trong đầu bạn, rồi ghi vào reply + description)
+
+A) Nguồn đầu vào:
+- Có ảnh/mockup/[Mô tả từ ảnh…] → đây là thiết kế UI cần xây hoặc đối chiếu.
+- Có GitHub/GitLab → ưu tiên clone/mở repo đó, đọc stack từ repo (không đoán bừa).
+- Có Figma → build theo spec Figma (Kid dùng figma_get).
+
+B) Project hiện có (đọc project_context):
+- EMPTY / chỉ stub (vd chỉ package-lock.json, không index.html/src) → GREENFIELD: phải scaffold app mới.
+- Đã có app (package.json + src/index.html/…) → EXTEND: sửa/thêm trên stack hiện có, KHÔNG scaffold lại trừ khi user yêu cầu làm lại từ đầu.
+- Ghi rõ trong reply: "Project đang trống → scaffold …" hoặc "Project đã có Vite/React → chỉnh trên codebase hiện có".
+
+C) Chọn stack / workflow (khi GREENFIELD hoặc user chưa chỉ định):
+- Web dashboard / admin / phòng điều khiển / desktop-web UI → mặc định **Vite + React + TypeScript** (Kid), CSS modules hoặc plain CSS theo mockup.
+- Landing / trang marketing đơn giản → Vite + HTML/CSS hoặc Vite + React nhẹ.
+- Mobile app (nhìn rõ native mobile, tab bar iOS/Android) → **React Native / Expo** — nêu rõ trong reply; nếu không chắc là mobile thì hỏi ngắn HOẶC chọn web Vite+React và ghi giả định.
+- Cần API/backend trong ảnh hoặc yêu cầu → thêm subtask **Agasa** (Node/Express hoặc FastAPI — chọn 1, ghi rõ), Kid chỉ UI + gọi API.
+- ĐÃ CÓ stack trong project_context → BẮT BUỘC theo stack đó (đọc package.json scripts/deps).
+- Trong **reply** phải nêu: stack đã chọn + lý do ngắn (1 câu). Trong **mọi subtask.description** nhắc lại lệnh scaffold/build (vd `npm create vite@latest . -- --template react-ts`).
+
+D) Thứ tự subtask (dependency đúng — KHÔNG nhảy QA):
+1. (Nếu greenfield) Scaffold project đúng stack + cấu trúc thư mục + chạy được dev/preview.
+2. Build UI theo mockup/ảnh (layout, màu, component chính).
+3. Tích hợp tương tác / API / state nếu cần.
+4. Smoke: build hoặc dev server + Live URL = 200.
+- CẤM subtask "phân tích thôi rồi xong" mà không tạo file. Phân tích gộp vào description của scaffold/build.
+- CẤM tạo subtask QA/Heiji/Haibara/Akai/Amuro — QA & security là quy trình tự động sau khi build xong.
+
+## Quy tắc khác
+- Task nhỏ 1 bước -> 1 subtask. Task phức tạp -> chain có depends_on.
+- CLONE GIT: không clone vào cây Orchestrator. Dùng path user / Projects root. Reply nêu path clone.
+- CLONE / chạy app: một tiến trình — clone → install → build/dev → start API nếu có → smoke Live URL + API.
+- Mô tả subtask phải đủ để Kid/Agasa làm không hỏi lại (kèm stack, path, acceptance: file nào, URL nào = 200).
+- Tag: "db-migration" / "security" / "deploy-prod" khi liên quan → operator review.
+- Trả lời ngay trong "reply" — có stack + tình trạng project.
 
 ĐỊNH DẠNG OUTPUT (bắt buộc): ký tự đầu tiên là "{{", ký tự cuối cùng là "}}".
 KHÔNG bọc trong mảng [...], KHÔNG code fence ```, KHÔNG text trước/sau JSON.
@@ -197,6 +218,155 @@ def _filter_build_only_subtasks(subtasks_info: list) -> list:
     return out
 
 
+def _inspect_project_for_planning(slug: str) -> str:
+    """Snapshot đĩa: project có app chưa, stack gì — đưa vào PLANNING_PROMPT."""
+    slug = (slug or "").strip()
+    if not slug:
+        return (
+            "(Chưa chọn Active Project — nếu user muốn build app mới, "
+            "Conan phải đề xuất slug + scaffold; nếu chỉ hỏi thì reply.)"
+        )
+
+    proj = app_settings.get_project(slug) or {}
+    pdir_raw = (proj.get("project_dir") or "").strip()
+    from ..paths import resolve_project_dir
+
+    if pdir_raw:
+        root = Path(pdir_raw).expanduser()
+        dir_note = "theo project_dir đã lưu"
+    else:
+        path_str, dir_note = resolve_project_dir(
+            slug=slug,
+            projects_root=app_settings.effective_projects_root(),
+        )
+        root = Path(path_str)
+
+    lines = [
+        f"Active slug: `{slug}`",
+        f"Path: `{root}` ({dir_note})",
+    ]
+
+    if not root.exists():
+        lines += [
+            "Trạng thái: THƯ MỤC CHƯA TỒN TẠI → GREENFIELD (phải scaffold app mới).",
+            "Stack gợi ý: chọn theo mockup/yêu cầu (mặc định web: Vite+React+TS).",
+        ]
+        return "\n".join(lines)
+
+    if not root.is_dir():
+        lines.append("Trạng thái: path tồn tại nhưng không phải thư mục.")
+        return "\n".join(lines)
+
+    try:
+        entries = sorted(root.iterdir(), key=lambda p: p.name.lower())
+    except OSError as e:
+        lines.append(f"Trạng thái: không đọc được thư mục ({e}).")
+        return "\n".join(lines)
+
+    names = [e.name for e in entries]
+    # Bỏ qua noise phổ biến khi đánh giá "có app chưa"
+    meaningful = [
+        n for n in names
+        if n not in {".git", ".DS_Store", "Thumbs.db", "node_modules", ".venv", "venv", "__pycache__"}
+        and not n.startswith(".")
+    ]
+    top = ", ".join(names[:40]) + (" …" if len(names) > 40 else "")
+    lines.append(f"Top-level ({len(names)} mục): {top or '(trống)'}")
+
+    has_pkg = (root / "package.json").is_file()
+    has_lock_only = (
+        not has_pkg
+        and any((root / n).is_file() for n in ("package-lock.json", "yarn.lock", "pnpm-lock.yaml"))
+    )
+    has_src = (root / "src").is_dir() or (root / "app").is_dir()
+    has_index = any(
+        (root / n).is_file()
+        for n in ("index.html", "index.js", "index.ts", "main.py", "App.tsx", "App.jsx")
+    )
+    has_py = (root / "pyproject.toml").is_file() or (root / "requirements.txt").is_file()
+    has_cargo = (root / "Cargo.toml").is_file()
+    has_go = (root / "go.mod").is_file()
+    has_git = (root / ".git").is_dir()
+    has_rn = (root / "app.json").is_file() or (root / "app.config.js").is_file()
+
+    stack_bits: list[str] = []
+    scripts_hint = ""
+    if has_pkg:
+        try:
+            pkg = json.loads((root / "package.json").read_text(encoding="utf-8", errors="replace"))
+            deps = {**(pkg.get("dependencies") or {}), **(pkg.get("devDependencies") or {})}
+            scripts = pkg.get("scripts") or {}
+            if scripts:
+                scripts_hint = ", ".join(f"{k}" for k in list(scripts)[:12])
+            name_l = {k.lower() for k in deps}
+            if "react-native" in name_l or "expo" in name_l:
+                stack_bits.append("React Native / Expo")
+            if "next" in name_l:
+                stack_bits.append("Next.js")
+            if "vite" in name_l or (root / "vite.config.ts").is_file() or (root / "vite.config.js").is_file():
+                stack_bits.append("Vite")
+            if "react" in name_l and "react-native" not in name_l:
+                stack_bits.append("React")
+            if "vue" in name_l:
+                stack_bits.append("Vue")
+            if "svelte" in name_l:
+                stack_bits.append("Svelte")
+            if "typescript" in name_l or (root / "tsconfig.json").is_file():
+                stack_bits.append("TypeScript")
+            if any(x in name_l for x in ("express", "fastify", "koa", "hono")):
+                stack_bits.append("Node API")
+            if not stack_bits:
+                stack_bits.append("Node/npm (xem package.json)")
+        except Exception as e:
+            stack_bits.append(f"package.json (đọc lỗi: {e})")
+
+    if has_py:
+        stack_bits.append("Python")
+        if (root / "manage.py").is_file():
+            stack_bits.append("Django?")
+        # FastAPI/Flask thường không có marker rõ — ghi requirements nếu ngắn
+    if has_cargo:
+        stack_bits.append("Rust")
+    if has_go:
+        stack_bits.append("Go")
+    if has_rn and "React Native / Expo" not in stack_bits:
+        stack_bits.append("có app.json (Expo?)")
+
+    # Phân loại GREENFIELD vs EXTEND
+    if not meaningful:
+        status = "EMPTY → GREENFIELD (scaffold app mới)."
+    elif has_lock_only and not has_pkg and not has_src and not has_index:
+        status = (
+            "STUB (chỉ lockfile / không có source) → GREENFIELD "
+            "(scaffold app; có thể xóa/ghi đè stub)."
+        )
+    elif has_pkg or has_src or has_index or has_py or has_cargo or has_go:
+        status = (
+            "ĐÃ CÓ APP/CODE → EXTEND (sửa/thêm trên stack hiện có; "
+            "KHÔNG scaffold lại trừ khi user yêu cầu làm lại từ đầu)."
+        )
+    else:
+        status = (
+            "Thư mục có file nhưng chưa rõ app → kiểm tra thêm; "
+            "nếu không có entrypoint thì GREENFIELD scaffold."
+        )
+
+    lines.append(f"Trạng thái: {status}")
+    if stack_bits:
+        lines.append(f"Stack phát hiện: {', '.join(stack_bits)}")
+    else:
+        lines.append("Stack phát hiện: (chưa có — Conan phải chọn stack khi plan).")
+    if scripts_hint:
+        lines.append(f"npm scripts: {scripts_hint}")
+    if has_git:
+        lines.append("Git: có .git")
+    lines.append(
+        "Quy tắc: GREENFIELD → plan scaffold đúng stack trước rồi build UI; "
+        "EXTEND → plan chỉnh file hiện có, giữ stack."
+    )
+    return "\n".join(lines)
+
+
 async def _fallback_plain_reply(user_message: str, history_text: str, planner: dict) -> bool:
     """Planner hỏng JSON — vẫn trả lời người dùng bằng text thường. True nếu đã reply."""
     prompt = (
@@ -272,6 +442,52 @@ def _prepare_vision_data_url(path: Path) -> tuple[str, str]:
     return f"data:image/jpeg;base64,{b64}", "image/jpeg"
 
 
+_VISION_NAME_HINT = re.compile(
+    r"(llama-4|scout|gpt-4o|gpt-4\.1|gemini|claude-3|claude-4|vision|qwen.*vl|llava)",
+    re.I,
+)
+_TEXT_ONLY_HINT = re.compile(
+    r"(deepseek|mimo|nemotron|flash-free|coder-free)(?!.*vision)",
+    re.I,
+)
+
+
+def _looks_multimodal(tool: dict) -> bool:
+    blob = f"{tool.get('id', '')} {tool.get('name', '')} {tool.get('model', '')}"
+    if _VISION_NAME_HINT.search(blob):
+        return True
+    if _TEXT_ONLY_HINT.search(blob):
+        return False
+    return False
+
+
+def _vision_candidate_llms(primary: dict) -> list[dict]:
+    """Primary + các tool multimodal khác (tránh deepseek text-only)."""
+    out: list[dict] = []
+    seen: set[str] = set()
+
+    def _add(cfg: dict) -> None:
+        key = f"{cfg.get('base_url')}|{cfg.get('model')}"
+        if key in seen or not cfg.get("model"):
+            return
+        seen.add(key)
+        out.append(cfg)
+
+    _add(primary)
+    for t in app_settings.llm_tools():
+        if not t.get("enabled", True):
+            continue
+        if not _looks_multimodal(t):
+            continue
+        _add({
+            "model": t.get("model") or "",
+            "base_url": t.get("base_url") or "",
+            "api_key": t.get("api_key") or "",
+            "name": t.get("name") or t.get("id") or t.get("model"),
+        })
+    return out
+
+
 async def analyze_image_and_chat(
     message: str,
     image_path: str,
@@ -288,7 +504,6 @@ async def analyze_image_and_chat(
         return
 
     # Ưu tiên role Vision; nếu chưa gán thì dùng MODEL_VISION env; cuối cùng fallback Planner
-    # (nhiều model multimodal như llama-4-scout được gán Planner nhưng quên gán Vision).
     used_fallback = False
     if roles.get("vision"):
         vision = app_settings.resolve_llm(role="vision")
@@ -315,6 +530,17 @@ async def analyze_image_and_chat(
             "Vision role chưa gán — dùng tạm model Planner `%s` để đọc ảnh",
             vision.get("name") or vision.get("model"),
         )
+
+    # deepseek/mimo text-only gắn nhầm role Vision → ưu tiên candidate multimodal
+    vname = f"{vision.get('name', '')} {vision.get('model', '')}"
+    if _TEXT_ONLY_HINT.search(vname) and not _VISION_NAME_HINT.search(vname):
+        alts = [c for c in _vision_candidate_llms(vision) if c.get("model") != vision.get("model")]
+        if alts:
+            log.warning(
+                "Vision role `%s` text-only — dùng multimodal `%s`",
+                vision.get("model"), alts[0].get("model"),
+            )
+            vision = alts[0]
 
     mime_guess = mimetypes.guess_type(str(path))[0] or "image/png"
     if not mime_guess.startswith("image/"):
@@ -344,30 +570,45 @@ async def analyze_image_and_chat(
         {"type": "image_url", "image_url": {"url": data_url}},
     ]
 
-    try:
-        msg = await llm.chat(
-            [{"role": "user", "content": prompt_blocks}],
-            model=vision["model"],
-            base_url=vision["base_url"],
-            api_key=vision["api_key"],
-        )
-        description = (msg.get("content") or "").strip()
-    except llm.LLMError as e:
-        log.exception("Vision model failed")
-        store.add_chat("conan", f"Gọi model đọc ảnh thất bại: {e}")
-        return
-    except Exception as e:
-        log.exception("Vision analyze crashed")
-        store.add_chat("conan", f"Gọi model đọc ảnh thất bại: {e}")
-        return
+    candidates = _vision_candidate_llms(vision)
+    description = ""
+    used_model = vision.get("name") or vision.get("model")
+    last_err: Exception | None = None
+    for cfg in candidates:
+        try:
+            msg = await llm.chat(
+                [{"role": "user", "content": prompt_blocks}],
+                model=cfg["model"],
+                base_url=cfg["base_url"],
+                api_key=cfg["api_key"],
+                max_retries=2,
+            )
+            description = (msg.get("content") or "").strip()
+            if description:
+                used_model = cfg.get("name") or cfg["model"]
+                break
+        except llm.LLMError as e:
+            last_err = e
+            log.warning("Vision candidate `%s` failed: %s", cfg.get("model"), e)
+            continue
+        except Exception as e:
+            last_err = e
+            log.exception("Vision candidate `%s` crashed", cfg.get("model"))
+            continue
 
     if not description:
-        store.add_chat("conan", "Model đọc ảnh trả về rỗng — thử model vision khác trong Settings.")
+        log.error("Vision model failed: %s", last_err)
+        store.add_chat(
+            "conan",
+            f"Gọi model đọc ảnh thất bại: {last_err}. "
+            "Role **Vision** cần model hỗ trợ ảnh (vd `@cf/meta/llama-4-scout…`), "
+            "không dùng deepseek text-only.",
+        )
         return
 
     enriched = (
         f"{user_text}\n\n"
-        f"[Mô tả từ ảnh đính kèm — model `{vision.get('name') or vision['model']}`]\n"
+        f"[Mô tả từ ảnh đính kèm — model `{used_model}`]\n"
         f"{description}"
     )
     await handle_chat(enriched, project=project)
@@ -420,6 +661,145 @@ async def handle_chat(user_message: str, project: str | None = None) -> None:
     detected_links = detect_links(user_message)
     link_hints = default_registry.planning_hints(detected_links)
 
+    # Figma: phải đọc được design (token + quyền file) trước khi tạo task
+    figma_links = [x for x in detected_links if x.get("type") == "figma"]
+    if figma_links:
+        import httpx
+
+        from ..mcp.figma_shim import _parse_figma_ref
+
+        fig = figma_links[0]
+        fig_url = fig.get("url") or "link Figma"
+        file_key, node_id = _parse_figma_ref(
+            fig_url, fig.get("file_key") or "", fig.get("node_id") or "",
+        )
+        tokens = app_settings.figma_tokens()
+        guide = (
+            "**Cách lấy key & thêm vào Orchestrator:**\n"
+            "1. Figma → avatar → **Settings** → **Security** → **Personal access tokens** → Generate\n"
+            "2. Orchestrator → **Settings** → **Figma & Git Access Tokens** → Thêm (`figd_…`)\n"
+            "3. (Khuyến nghị) Projects → focus → **Builtin** → Lưu MCP\n"
+            "4. **Gửi lại** link Figma này\n"
+        )
+
+        if not tokens:
+            store.add_chat(
+                "conan",
+                "Bạn vừa gửi link Figma nhưng **chưa có Figma token** — tôi **chưa tạo task**.\n\n"
+                f"Link: `{fig_url}`\n\n" + guide,
+            )
+            return
+
+        tok = tokens[0]["token"]
+        try:
+            me = httpx.get(
+                "https://api.figma.com/v1/me",
+                headers={"X-Figma-Token": tok},
+                timeout=15,
+            )
+        except httpx.HTTPError as e:
+            store.add_chat(
+                "conan",
+                f"Không kiểm tra được Figma token (`{e}`) — **chưa tạo task**.\n\n"
+                f"Link: `{fig_url}`\n\n" + guide,
+            )
+            return
+        if me.status_code != 200:
+            try:
+                err = me.json().get("err") or me.text[:120]
+            except Exception:
+                err = me.text[:120]
+            store.add_chat(
+                "conan",
+                f"Figma token không hợp lệ (`{err}`) — tôi **chưa tạo task**.\n\n"
+                f"Link: `{fig_url}`\n\n" + guide
+                + "\nXóa token cũ trong Settings rồi thêm token mới.",
+            )
+            return
+
+        if not file_key:
+            store.add_chat(
+                "conan",
+                "Link Figma không nhận diện được file key — **chưa tạo task**. "
+                "Gửi link dạng `figma.com/design/<key>/...?node-id=...`.",
+            )
+            return
+
+        # Probe đọc được file/node (nodes → images fallback)
+        headers = {"X-Figma-Token": tok}
+        can_read = False
+        via = ""
+        fail_detail = ""
+        try:
+            if node_id:
+                nr = httpx.get(
+                    f"https://api.figma.com/v1/files/{file_key}/nodes",
+                    params={"ids": node_id, "depth": 1},
+                    headers=headers,
+                    timeout=25,
+                )
+            else:
+                nr = httpx.get(
+                    f"https://api.figma.com/v1/files/{file_key}",
+                    params={"depth": 1},
+                    headers=headers,
+                    timeout=25,
+                )
+            if nr.status_code == 200:
+                can_read = True
+                via = "nodes API"
+            elif nr.status_code == 429 and node_id:
+                # Rate limit nodes — thử images (thường còn quota)
+                ir = httpx.get(
+                    f"https://api.figma.com/v1/images/{file_key}",
+                    params={"ids": node_id, "format": "png", "scale": 1},
+                    headers=headers,
+                    timeout=40,
+                )
+                img_url = ""
+                if ir.status_code == 200:
+                    img_url = (ir.json().get("images") or {}).get(node_id) or ""
+                if img_url:
+                    can_read = True
+                    via = "images API + Vision (nodes đang 429)"
+                else:
+                    fail_detail = (
+                        f"nodes HTTP 429 và images HTTP {ir.status_code} — "
+                        "Figma đang rate-limit. Đợi hết hạn rồi gửi lại link."
+                    )
+            elif nr.status_code in (403, 404):
+                fail_detail = (
+                    f"Không có quyền / không thấy file (HTTP {nr.status_code}). "
+                    "Token phải thuộc account được share file này."
+                )
+            else:
+                fail_detail = f"Figma API HTTP {nr.status_code}: {nr.text[:160]}"
+        except httpx.HTTPError as e:
+            fail_detail = str(e)
+
+        if not can_read:
+            store.add_chat(
+                "conan",
+                "Đã có token nhưng **không đọc được Figma design** — tôi **chưa tạo task**.\n\n"
+                f"Link: `{fig_url}`\n"
+                f"Chi tiết: {fail_detail or 'unknown'}\n\n"
+                "Thử: đợi hết rate-limit, kiểm tra quyền share file, hoặc tạo PAT mới rồi gửi lại link.\n"
+                + guide,
+            )
+            return
+
+        if "429" in via or "Vision" in via:
+            store.add_chat(
+                "conan",
+                f"Figma token OK — đọc design qua **{via}** (cây node đang rate-limit). "
+                "Tôi vẫn lập task; Kid sẽ dùng MCP/Vision, không spam `files/nodes`.",
+            )
+        # Gắn hint cho planner
+        link_hints = (
+            (link_hints or "")
+            + f"\nFigma preflight: OK via {via}; fileKey={file_key}; nodeId={node_id or '(root)'}."
+        ).strip()
+
     # Clone git: hỏi thư mục nếu user chưa chỉ định (tránh nhồi vào Orchestrator)
     git_early = next(
         (x for x in detected_links if x.get("type") in ("github", "gitlab") and x.get("clone_url")),
@@ -462,11 +842,13 @@ async def handle_chat(user_message: str, project: str | None = None) -> None:
             )
             return
 
+    project_context = _inspect_project_for_planning(active)
     prompt = PLANNING_PROMPT.format(
         roster=roster_description(),
         memory=memory.read_memory()[-4000:],
         wiki=memory.read_wiki_summary(3000),
         board=_board_snapshot(),
+        project_context=project_context,
         history=history_text,
         message=user_message.replace('"', "'"),
         active_project=active or "(chưa chọn — có thể tạo project mới nếu cần)",
@@ -633,6 +1015,11 @@ async def handle_chat(user_message: str, project: str | None = None) -> None:
             st["description"] = (st.get("description") or "") + "\n\n" + "\n".join(steers)
         st["tags"] = tags
 
+    # Ép chain tuần tự cho mọi build sub (kid/agasa) — bỏ parallel do planner.
+    # Sub #n chỉ chạy khi #n-1 đã testing/done; QA chỉ sau khi hết build.
+    for i, st in enumerate(subtasks_info):
+        st["depends_on"] = [i - 1] if i > 0 else []
+
     parent = store.create_task(
         title=tinfo["title"],
         description=tinfo.get("description", ""),
@@ -664,19 +1051,83 @@ async def handle_chat(user_message: str, project: str | None = None) -> None:
             if isinstance(idx, int) and 0 <= idx < len(created) and created[idx].id != sub.id:
                 store.add_dep(sub.id, created[idx].id, "blocks")
 
+    seq = " → ".join(f"#{i+1}" for i in range(len(created)))
     store.add_event(
         parent.id, "conan", "comment",
-        "Kế hoạch: " + "; ".join(f"Subtask #{i+1} ({s.id})→{s.assignee}" for i, s in enumerate(created)),
+        "Kế hoạch (tuần tự): " + "; ".join(
+            f"Subtask #{i+1} ({s.id})→{s.assignee}" for i, s in enumerate(created)
+        ) + f". Chạy {seq}; QA chỉ sau khi hết build.",
     )
 
     plan_lines = "\n".join(
-        f"- Subtask #{i+1} ({s.id}) → {AGENTS[s.assignee].display}: {s.title}" for i, s in enumerate(created)
+        f"- Subtask #{i+1} ({s.id}) → {AGENTS[s.assignee].display}: {s.title}"
+        + (f" (sau #{i})" if i else " (đầu tiên)")
+        for i, s in enumerate(created)
     )
     reply = decision.get("reply", "Đã lập kế hoạch.")
-    store.add_chat("conan", f"{reply}\n\nKế hoạch ({parent.id} — project `{project_slug}`):\n{plan_lines}")
+    store.add_chat(
+        "conan",
+        f"{reply}\n\nKế hoạch ({parent.id} — project `{project_slug}`):\n{plan_lines}\n\n"
+        f"⏱ Chạy tuần tự {seq}. QA (Heiji) chỉ mở sau khi mọi subtask build xong; "
+        f"PASS mới tới Security → Pentest → Final Review.",
+    )
 
 
 # ---------- Phase 5: closure ----------
+
+
+def _build_subtasks(subtasks: list[Task]) -> list[Task]:
+    """Subtask build (Kid/Agasa), không gồm bug."""
+    return [
+        t for t in subtasks
+        if t.assignee in ("kid", "agasa") and t.type != "bug"
+    ]
+
+
+def _builders_all_finished(builders: list[Task]) -> bool:
+    """True khi mọi build sub đã testing/done/review — không còn backlog/in_progress/blocked."""
+    if not builders:
+        return False
+    busy = {"backlog", "in_progress", "blocked"}
+    done_ok = {"testing", "done", "review"}
+    return all(t.status in done_ok for t in builders) and not any(t.status in busy for t in builders)
+
+
+def _qa_checklist_text(builders: list[Task]) -> str:
+    """Checklist bắt Heiji QA lần lượt từng build sub."""
+    if not builders:
+        return "(Không có build subtask)"
+    # Giữ thứ tự tạo (created_at) ≈ thứ tự kế hoạch
+    ordered = sorted(builders, key=lambda t: (t.created_at or "", t.id))
+    lines = [
+        "Bắt buộc QA lần lượt TỪNG build sub (đánh dấu [x]/PASS hoặc [ ] FAIL + bug):",
+    ]
+    for i, t in enumerate(ordered, 1):
+        lines.append(
+            f"- [ ] #{i} {t.id} ({t.assignee}): {t.title}\n"
+            f"      Evidence: file trên đĩa / Live URL / hành vi theo description subtask."
+        )
+    lines += [
+        "",
+        "FAIL sub nào → create_bug_ticket(",
+        "  related_subtask_id=<id sub FAIL>, area=frontend|backend, severity, repro_steps",
+        ")",
+        "VERDICT: PASS chỉ khi MỌI sub ở trên PASS. Còn 1 sub FAIL → VERDICT: FAIL.",
+    ]
+    return "\n".join(lines)
+
+
+def _mark_builders_done(builders: list[Task]) -> int:
+    """Sau QA PASS: build sub testing → done. Trả số task đã đóng."""
+    n = 0
+    for t in builders:
+        if t.status == "testing":
+            try:
+                store.set_status(t.id, "done", "conan")
+                n += 1
+            except Exception:
+                pass
+    return n
 
 
 def _collect_deliverables(subtasks: list[Task]) -> str:
@@ -695,13 +1146,40 @@ def _collect_deliverables(subtasks: list[Task]) -> str:
     return "\n\n".join(items)
 
 
+def _qa_text_has_real_errors(text: str) -> bool:
+    """Keyword FAIL chỉ khi mô tả lỗi thật — bỏ qua '0 console error', 'Issues Found: 0'."""
+    cleaned = re.sub(
+        r"(?is)("
+        r"0\s*console\s*errors?|no\s*console\s*errors?|"
+        r"issues?\s*found\s*:\s*0|0\s*issues?\s*found|"
+        r"0\s*lỗi|không\s*có\s*lỗi|không\s*lỗi\b|no\s*issues?\b|"
+        r"0\s*http[^.\n]{0,20}400|0\s*ảnh\s*hỏng|"
+        r"không\s*lỗi\s*proxy|without\s*fail|no\s*fail"
+        r")",
+        " ",
+        text or "",
+    )
+    return bool(re.search(
+        r"(connection refused|502 bad|proxy failed|server not running|api error|port \d+ refused|"
+        r"(?<!\d )\bissues?\s+found\b|lỗi phát hiện|broken image|"
+        r"(?<!\d )\bconsole errors?\b|404 not found|500 internal|"
+        r"không chạy|chưa xong|bị lỗi|chưa khớp|\bmismatch\b|lệch layout|"
+        r"\berror:|\bexception:)",
+        cleaned,
+        re.I,
+    ))
+
+
 def _qa_verdict(parent_id: str) -> tuple[str, str]:
-    """Lấy verdict QA từ các comment của heiji (mới nhất trước). Trả về (PASS|FAIL|UNKNOWN, text)."""
+    """Lấy verdict QA từ các comment của heiji (mới nhất trước).
+
+    Trả về (PASS|FAIL|UNKNOWN|MISSING, text). MISSING = chưa có subtask Heiji —
+    không được coi là PASS (tránh nhảy Haibara/Akai khi Kid vừa 'xong').
+    """
     subtasks = store.list_tasks(parent_id=parent_id)
     qa_tasks = [t for t in subtasks if t.assignee == "heiji"]
     if not qa_tasks:
-        # Nếu task không tạo Heiji subtask riêng -> cho phép Conan Final Review trực tiếp
-        return "PASS", "(Không có Heiji subtask riêng)"
+        return "MISSING", "(Chưa có Heiji QA — hệ thống sẽ tạo)"
 
     newest_text = ""
     for qa in reversed(qa_tasks):
@@ -712,26 +1190,29 @@ def _qa_verdict(parent_id: str) -> tuple[str, str]:
             newest_text = newest_text or text
             up = text.upper()
 
-            # Universal Safety Guard: Nếu báo cáo QA ghi nhận BẤT KỲ LỖI NÀO (UI, API, Console Error, 40x/50x, Lệch layout...) -> ÉP FAIL NGAY
-            has_error = bool(re.search(
-                r"(connection refused|502 bad|proxy failed|server not running|api error|port \d+ refused|"
-                r"issues found|lỗi phát hiện|broken image|console error|404 not found|500 internal|"
-                r"không chạy|chưa xong|bị lỗi|chưa khớp|mismatch|lệch layout|error:|exception:)",
-                text, re.I
-            ))
-            if has_error and "NO ISSUES" not in up and "0 LỖI" not in up and "KHÔNG CÓ LỖI" not in up:
+            # VERDICT dòng tường minh thắng keyword (tránh 'Issues Found: 0' / '0 console error' → FAIL giả)
+            m_pass = re.search(r"VERDICT:[^\n]{0,80}\bPASS\b", up)
+            m_fail = re.search(r"VERDICT:[^\n]{0,80}\bFAIL\b", up)
+            if m_pass and not m_fail:
+                return "PASS", text
+            if m_fail and not m_pass:
+                return "FAIL", text
+            if m_pass and m_fail:
+                return ("FAIL", text) if m_fail.start() <= m_pass.start() else ("PASS", text)
+
+            if _qa_text_has_real_errors(text):
                 return "FAIL", text
 
-            if re.search(r"VERDICT:\s*PASS", up):
-                return "PASS", text
-            if re.search(r"VERDICT:\s*FAIL", up):
-                return "FAIL", text
             if "FAIL" in up and "PASS" not in up and "NO FAIL" not in up and "WITHOUT FAIL" not in up:
                 return "FAIL", text
             if any(k in up for k in ["PASS", "PASSED", "THÀNH CÔNG", "HOÀN THÀNH", "SUCCESS", "HOẠT ĐỘNG BÌNH THƯỜNG", "KHÔNG CÓ LỖI", "200 OK"]):
                 return "PASS", text
     if newest_text:
         up_news = newest_text.upper()
+        if re.search(r"VERDICT:[^\n]{0,80}\bPASS\b", up_news) and not re.search(
+            r"VERDICT:[^\n]{0,80}\bFAIL\b", up_news
+        ):
+            return "PASS", newest_text
         if "FAIL" not in up_news and any(k in up_news for k in ["OK", "SUCCESS", "CHECK", "200"]):
             return "PASS", newest_text
         return "UNKNOWN", newest_text
@@ -739,23 +1220,86 @@ def _qa_verdict(parent_id: str) -> tuple[str, str]:
 
 
 def _critic_verdict(task_id: str, agent: str, heading: str) -> tuple[str, str]:
-    """Parse PASS/FAIL từ comment của critic agent (Akai/Amuro). Trả về (PASS|FAIL|UNKNOWN, text)."""
+    """Parse PASS/FAIL từ comment của critic agent (Akai/Amuro).
+
+    Quét vài comment mới nhất (không chỉ dòng cuối) — Amuro hay tóm tắt
+    'Kết quả: PASS' sau khi đã post '## Penetration Test — PASS'.
+    """
     events = store.list_events(task_id)
     comments = [e for e in events if e.kind == "comment" and e.agent == agent]
     if not comments:
         return "UNKNOWN", ""
-    text = comments[-1].message or ""
-    up = text.upper()
+
     head = heading.upper()
-    if f"{head} — PASS" in up or f"{head} - PASS" in up:
-        return "PASS", text
-    if f"{head} — FAIL" in up or f"{head} - FAIL" in up:
-        return "FAIL", text
-    if re.search(r"VERDICT:\s*PASS", up):
-        return "PASS", text
-    if re.search(r"VERDICT:\s*FAIL", up):
-        return "FAIL", text
-    return "UNKNOWN", text
+    # Heading rút gọn: "PENETRATION TEST" / "SECURITY REVIEW"
+    head_short = re.sub(r"\s+", r"\\s+", re.escape(head))
+
+    for ev in reversed(comments[-8:]):
+        text = ev.message or ""
+        up = text.upper()
+        if re.search(rf"{head_short}\s*[—\-:]\s*PASS", up) or f"{head} — PASS" in up:
+            return "PASS", text
+        if re.search(rf"{head_short}\s*[—\-:]\s*FAIL", up) or f"{head} — FAIL" in up:
+            return "FAIL", text
+        if re.search(r"VERDICT:\s*[✅✔️]?\s*PASS", up) or re.search(r"VERDICT:[^\n]{0,40}\bPASS\b", up):
+            if not re.search(r"VERDICT:[^\n]{0,40}\bFAIL\b", up):
+                return "PASS", text
+        if re.search(r"VERDICT:\s*[❌⛔]?\s*FAIL", up) or re.search(r"VERDICT:[^\n]{0,40}\bFAIL\b", up):
+            return "FAIL", text
+        # Tóm tắt kiểu "Kết quả: PASS" / "**Kết quả: PASS — ..."
+        if re.search(r"K[ẾE]T\s*QU[ẢA]\s*:\s*PASS\b", up) or re.search(
+            r"\bPASS\b\s*[—\-].{0,40}(KHÔNG|NO).{0,20}(L[ỖO]H[ỖO]NG|VULN)", up
+        ):
+            if "FAIL" not in up.split("PASS")[0][-40:]:
+                return "PASS", text
+        if re.search(r"K[ẾE]T\s*QU[ẢA]\s*:\s*FAIL\b", up):
+            return "FAIL", text
+
+    return "UNKNOWN", comments[-1].message or ""
+
+
+def project_has_real_app(project_dir: str) -> tuple[bool, str]:
+    """True nếu project có app/source thật — không chỉ stub lockfile."""
+    if not project_dir:
+        return False, "không có project_dir"
+    root = Path(project_dir)
+    if not root.is_dir():
+        return False, f"thư mục không tồn tại: {root}"
+
+    pkg = root / "package.json"
+    has_src = (root / "src").is_dir() or (root / "app").is_dir()
+    has_index = any(
+        (root / n).is_file()
+        for n in ("index.html", "main.py", "App.tsx", "App.jsx", "main.tsx", "main.jsx")
+    )
+    has_py = (root / "pyproject.toml").is_file() or (
+        (root / "requirements.txt").is_file() and any(root.glob("*.py"))
+    )
+    has_rn = (root / "app.json").is_file() or (root / "app.config.js").is_file()
+
+    if pkg.is_file():
+        try:
+            data = json.loads(pkg.read_text(encoding="utf-8", errors="replace"))
+            if data.get("dependencies") or data.get("devDependencies") or data.get("scripts"):
+                if has_src or has_index or (root / "vite.config.ts").is_file() or (root / "vite.config.js").is_file():
+                    return True, "có package.json + source/vite"
+                return False, "có package.json nhưng chưa có src/index — scaffold chưa xong"
+        except Exception:
+            return False, "package.json không đọc được"
+        return False, "package.json rỗng / thiếu deps"
+
+    if has_py or has_rn or (has_src and has_index):
+        return True, "có source app"
+
+    try:
+        names = {p.name for p in root.iterdir()}
+    except OSError:
+        return False, "không đọc được thư mục"
+    noise = {".git", "node_modules", "package-lock.json", "yarn.lock", "pnpm-lock.yaml", ".DS_Store"}
+    meaningful = names - noise - {n for n in names if n.startswith(".")}
+    if not meaningful:
+        return False, "project trống hoặc chỉ stub (lockfile) — chưa scaffold/build"
+    return False, f"chưa thấy app entry (thấy: {', '.join(sorted(meaningful)[:8])})"
 
 
 def _ensure_parent_testing(parent: Task) -> None:
@@ -790,7 +1334,11 @@ def _gate_critic_stage(
         "proceed" — stage này PASS
         "wait" — đã tạo/đang chờ subtask, requeue, hoặc đã giao bug
     """
-    stage_tasks = [t for t in store.list_tasks(parent_id=parent.id) if t.assignee == agent]
+    # Bỏ qua failed/archived (lượt Security/Pentest cũ khi nhảy QA sớm)
+    stage_tasks = [
+        t for t in store.list_tasks(parent_id=parent.id)
+        if t.assignee == agent and t.status not in ("failed", "archived")
+    ]
     if not stage_tasks:
         created = store.create_task(
             title=task_title,
@@ -860,12 +1408,25 @@ def _gate_critic_stage(
         return "wait"
 
     if verdict != "PASS":
+        # Đã từng requeue mà vẫn UNKNOWN → log rõ, tránh đứng im không dấu vết
+        log.warning(
+            "%s: %s verdict=%s sau khi đã có tag retry — giữ wait (comment gần nhất: %s)",
+            parent.id, display, verdict, (text or "")[:180].replace("\n", " "),
+        )
         return "wait"
     return "proceed"
 
 
 def _gate_security_pentest(parent: Task, subtasks: list[Task]) -> str:
     """Gate tuần tự Akai → Amuro trước Final Review (2 lần gọi _gate_critic_stage)."""
+    builders = _build_subtasks(subtasks)
+    if builders and not _builders_all_finished(builders):
+        log.info("%s: chặn Security — build sub chưa xong hết", parent.id)
+        return "wait"
+    if _open_related_bugs(parent):
+        log.info("%s: chặn Security — còn bug mở, phải fix + QA lại trước", parent.id)
+        return "wait"
+
     preview_url = f"{config.BASE_URL}/preview/{parent.project}/"
 
     sec = _gate_critic_stage(
@@ -1019,6 +1580,19 @@ def _requeue_qa(qa: Task, mark_tag: str, reason: str, chat_msg: str) -> None:
     store.add_chat("conan", chat_msg)
 
 
+async def re_run_task_closure(parent_id: str) -> None:
+    """Operator bấm Chạy lại: tiếp tục lifecycle (scheduler + closure) cho task cha."""
+    parent = store.get_task(parent_id)
+    if not parent:
+        return
+    if parent.status in ("done", "archived"):
+        return
+    try:
+        await check_parent_progress(parent_id)
+    except Exception:
+        log.exception("re_run_task_closure failed for %s", parent_id)
+
+
 async def check_parent_progress(parent_id: str) -> None:
     """Conan Lifecycle Supervisor — Kiểm tra & cập nhật tiến độ toàn bộ vòng đời subtask -> parent task."""
     parent = store.get_task(parent_id)
@@ -1029,17 +1603,23 @@ async def check_parent_progress(parent_id: str) -> None:
         return
 
     # 1. Cập nhật real-time trạng thái task cha dựa vào tiến trình các subtask
-    # Coder (Kid/Agasa) đang viết code / fix bug -> cột In Progress
+    builders = _build_subtasks(subtasks)
+    critic_agents = ("heiji", "akai", "amuro", "haibara")
+    # Còn build/bug chưa xong (kể cả backlog chờ dep) → In Progress — KHÔNG nhảy QA sớm
     has_coder_working = any(
-        (t.status == "in_progress" and t.assignee in ("kid", "agasa")) or
-        (t.type == "bug" and t.status in ("backlog", "in_progress"))
+        (t.assignee in ("kid", "agasa") and t.type != "bug"
+         and t.status in ("backlog", "in_progress"))
+        or (t.type == "bug" and t.status in ("backlog", "in_progress"))
         for t in subtasks
     )
-    # Heiji/Akai/Amuro đang critic hoặc subtask ở bước testing -> cột In Testing / QA
-    critic_agents = ("heiji", "akai", "amuro", "haibara")
-    has_testing = any(
-        t.status == "testing" or (t.status == "in_progress" and t.assignee in critic_agents)
+    # Cột Testing/QA chỉ khi: critic đang chạy, HOẶC mọi build đã xong (chờ/đang Heiji)
+    builders_done = _builders_all_finished(builders) if builders else False
+    has_critic_active = any(
+        t.assignee in critic_agents and t.status in ("backlog", "in_progress", "testing")
         for t in subtasks
+    )
+    has_testing = (not has_coder_working) and (
+        has_critic_active or (builders_done and any(t.status == "testing" for t in subtasks))
     )
     has_blocked = any(t.status == "blocked" for t in subtasks)
 
@@ -1088,8 +1668,14 @@ async def check_parent_progress(parent_id: str) -> None:
     if parent.status in ("blocked", "failed"):
         return
 
-    # 2. Nếu còn subtask ở backlog, in_progress, hoặc blocked -> chưa đủ điều kiện closure
+    builders = _build_subtasks(subtasks)
+
+    # 2. Còn worker/bug đang chạy → chưa closure (Security/QA không nhảy sớm)
     if any(t.status in ("backlog", "in_progress", "blocked") for t in subtasks):
+        return
+
+    # Build chưa xong hết → chưa mở Heiji / Security
+    if builders and not _builders_all_finished(builders):
         return
 
     # Fix round: bug do QA tạo → giao fixer theo area (Conan không tạo bug)
@@ -1116,12 +1702,72 @@ async def check_parent_progress(parent_id: str) -> None:
 
 
 async def _closure(parent: Task, subtasks: list[Task]) -> None:
-    """Phase 5: QA PASS → Haibara → Akai → Amuro → Conan Final Review. FAIL → bug/Kid."""
-    verdict, qa_text = _qa_verdict(parent.id)
-
+    """Phase 5: build hết → Heiji QA từng sub → PASS → Haibara → Akai → Amuro → Conan."""
+    builders = _build_subtasks(subtasks)
     qa_tasks = [t for t in subtasks if t.assignee == "heiji"]
     qa = qa_tasks[-1] if qa_tasks else None
     rounds = _fix_rounds(parent)
+
+    # Stage gate: chưa hết build → không tạo/chạy QA/Security
+    if builders and not _builders_all_finished(builders):
+        log.info("%s: chờ build tuần tự xong (%d sub) trước khi QA", parent.id, len(builders))
+        return
+
+    # Build xong mà chưa có Heiji → tạo QA checklist từng sub, KHÔNG fake PASS
+    if not qa:
+        if not builders:
+            return
+        ok, reason = project_has_real_app(parent.project_dir or "")
+        if not ok:
+            for t in builders:
+                if t.status == "testing":
+                    try:
+                        store.set_status(t.id, "in_progress", "conan")
+                        store.set_status(t.id, "backlog", "conan")
+                    except Exception:
+                        pass
+                    store.add_event(
+                        t.id, "conan", "system",
+                        f"Chặn vào QA: {reason}. Scaffold/build lại trước.",
+                    )
+            if parent.status != "in_progress":
+                try:
+                    store.set_status(parent.id, "in_progress", "conan")
+                except Exception:
+                    pass
+            store.add_chat(
+                "conan",
+                f"{parent.id}: chưa mở Heiji QA — project chưa có app ({reason}). "
+                "Đã trả subtask Kid/Agasa về backlog.",
+            )
+            return
+        checklist = _qa_checklist_text(builders)
+        created = store.create_task(
+            title=f"QA — {parent.title}",
+            description=(
+                f"Visual/functional QA cho {parent.id}.\n"
+                f"Project: {parent.project_dir}\n"
+                f"Live URL: {config.BASE_URL}/preview/{parent.project}/\n\n"
+                f"{checklist}\n\n"
+                "Kiểm tra deliverable thật trên đĩa + Live URL theo từng sub ở trên. "
+                "VERDICT: PASS chỉ khi mọi build sub PASS; FAIL + create_bug_ticket(related_subtask_id=…)."
+            ),
+            assignee="heiji",
+            project=parent.project,
+            project_dir=parent.project_dir,
+            parent_id=parent.id,
+            created_by="conan",
+            tags=["auto-qa"],
+        )
+        _ensure_parent_testing(parent)
+        store.add_chat(
+            "conan",
+            f"{parent.id}: mọi build sub đã xong (tuần tự) — tạo {created.id} (Heiji QA từng sub). "
+            "Chưa tới Security/Pentest cho tới khi QA PASS + không còn bug mở.",
+        )
+        return
+
+    verdict, qa_text = _qa_verdict(parent.id)
 
     # QA chưa có verdict rõ → bắt Heiji chạy lại (chưa tới Conan)
     if verdict == "UNKNOWN" and qa and qa.status == "testing" and "qa-retry" not in qa.tags:
@@ -1178,8 +1824,10 @@ async def _closure(parent: Task, subtasks: list[Task]) -> None:
         )
         return
 
-    # Chỉ PASS mới tới Conan
+    # Chỉ PASS mới tới Haibara / Security / Conan
     if verdict != "PASS":
+        if verdict == "MISSING":
+            return
         tag = f"warn-no-pass-{verdict}"
         if tag not in parent.tags:
             store.add_chat(
@@ -1188,6 +1836,28 @@ async def _closure(parent: Task, subtasks: list[Task]) -> None:
             )
             store.update_task_fields(parent.id, tags=[*parent.tags, tag])
         return
+
+    # Còn bug mở → không Security (dù Heiji nói PASS)
+    open_after_pass = _open_related_bugs(parent)
+    if open_after_pass:
+        n = _assign_bugs_to_fixer(parent, open_after_pass)
+        if n < 0:
+            store.set_status(parent.id, "blocked", "conan")
+            return
+        store.add_chat(
+            "conan",
+            f"{parent.id}: QA ghi PASS nhưng còn bug mở — giao fixer trước, chưa Security.",
+        )
+        return
+
+    # QA PASS → đóng build sub (board: #1…#n done) trước Security
+    closed = _mark_builders_done(builders)
+    if closed:
+        store.add_chat(
+            "conan",
+            f"{parent.id}: QA PASS — đã đóng {closed} build subtask → done. "
+            "Tiếp Security (Akai) → Pentest (Amuro).",
+        )
 
     # Haibara tổng hợp (QA đã PASS) — chỉ chạy một lần
     events = store.list_events(parent.id)

@@ -105,17 +105,57 @@ TOOL_SCHEMAS: dict[str, dict] = {
         "function": {
             "name": "figma_get",
             "description": (
-                "Lấy thiết kế từ Figma (dùng token trong Settings). Trả về cây node rút gọn: "
-                "tên, loại, kích thước, vị trí, màu (hex), text, font. Dùng node_id để đào sâu "
-                "vào một node cụ thể khi cây bị cắt bớt."
+                "Lấy thiết kế từ Figma (token trong Settings). Ưu tiên cây node (màu hex, font, layout). "
+                "Nếu API nodes bị 429/lỗi: tự export PNG frame + Vision mô tả UI — dùng kết quả đó để code, "
+                "KHÔNG gọi figma_get lại liên tục. Truyền url có node-id hoặc node_id rõ ràng. "
+                "Khi project có MCP: ưu tiên mcp_call get_design_context trước."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "url": {"type": "string", "description": "Link Figma (figma.com/design/... hoặc /file/...) hoặc file key"},
-                    "node_id": {"type": "string", "description": "Tùy chọn: id node (vd '12:34') để lấy chi tiết một nhánh"},
+                    "node_id": {"type": "string", "description": "Tùy chọn: id node (vd '12:34' hoặc '12-34')"},
                 },
                 "required": ["url"],
+            },
+        },
+    },
+    "mcp_list_tools": {
+        "type": "function",
+        "function": {
+            "name": "mcp_list_tools",
+            "description": (
+                "Liệt kê tools trên MCP server của project (mcp_url trong Settings). "
+                "Mặc định builtin http://127.0.0.1:PORT/mcp/figma (get_design_context, get_screenshot, …)."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    "mcp_call": {
+        "type": "function",
+        "function": {
+            "name": "mcp_call",
+            "description": (
+                "Gọi một MCP tool. Figma builtin: get_design_context / get_metadata / get_screenshot "
+                "(arguments cần url Figma có node-id). Dùng TRƯỚC figma_get khi project đã gắn MCP."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tool": {
+                        "type": "string",
+                        "description": "Tên tool MCP, vd get_design_context",
+                    },
+                    "arguments": {
+                        "type": "object",
+                        "description": "Arguments JSON object (vd {\"url\": \"https://figma.com/design/...\"})",
+                    },
+                    "arguments_json": {
+                        "type": "string",
+                        "description": "Thay arguments bằng chuỗi JSON nếu model tiện serialize",
+                    },
+                },
+                "required": ["tool"],
             },
         },
     },
@@ -177,8 +217,10 @@ TOOL_SCHEMAS: dict[str, dict] = {
             "description": (
                 "Tạo bug ticket chính thức với schema bắt buộc. Chỉ dùng sau khi đã "
                 "search_tasks để chắc chắn chưa có ticket trùng. Bug sẽ tự động được "
-                "link 'related' về task hiện tại. Chỉ định area để giao đúng fixer: "
-                "frontend→Kid, backend→Agasa."
+                "link 'related' về task hiện tại (QA/Security). "
+                "Khi QA FAIL một build sub cụ thể: BẮT BUỘC truyền related_subtask_id "
+                "(vd sub-2534) để gắn bug về đúng sub nguồn. "
+                "area: frontend→Kid, backend→Agasa."
             ),
             "parameters": {
                 "type": "object",
@@ -191,6 +233,13 @@ TOOL_SCHEMAS: dict[str, dict] = {
                         "type": "string",
                         "enum": ["frontend", "backend"],
                         "description": "'frontend' -> Kid; 'backend' (API/DB/auth/SQL injection/IDOR) -> Agasa.",
+                    },
+                    "related_subtask_id": {
+                        "type": "string",
+                        "description": (
+                            "Id build subtask bị lỗi (vd sub-2534). "
+                            "Heiji QA FAIL theo checklist từng sub phải điền."
+                        ),
                     },
                 },
                 "required": ["title", "description", "severity", "repro_steps"],
@@ -552,19 +601,30 @@ class ToolContext:
     # --- figma ---
 
     def _tool_figma_get(self, url: str, node_id: str = "") -> str:
+        import time
+        from urllib.parse import unquote
+
         from ..links import default_registry
+
+        # LLM hay dính dấu , " ở cuối URL khi gọi tool
+        url = unquote((url or "").strip().rstrip(",\"' \n\t"))
+        node_id = (node_id or "").strip().rstrip(",\"' \n\t").replace("-", ":")
 
         parsed = default_registry.detect_and_parse(url)
         file_key = ""
         if parsed.get("type") == "figma":
             file_key = parsed.get("file_key") or ""
             if not node_id:
-                node_id = parsed.get("node_id") or ""
+                node_id = (parsed.get("node_id") or "").replace("-", ":")
         if not file_key:
             m = re.search(r"figma\.com/(?:file|design|proto|board)/([A-Za-z0-9]+)", url)
             file_key = m.group(1) if m else (url if re.fullmatch(r"[A-Za-z0-9]{15,}", url) else "")
         if not file_key:
             return "ERROR: không nhận diện được file key từ link. Định dạng: figma.com/design/<key>/..."
+
+        cached = _figma_cache_load(file_key, node_id)
+        if cached:
+            return cached + "\n\n(NOTE: cache local — không gọi Figma API lại)"
 
         tokens = settings.figma_tokens()
         if not tokens:
@@ -576,49 +636,142 @@ class ToolContext:
             api = f"https://api.figma.com/v1/files/{file_key}?depth=25"
 
         last_err = ""
+        hit_429 = False
         for tok in tokens:
-            resp = None
-            for attempt in range(3):
+            try:
+                resp = httpx.get(api, headers={"X-Figma-Token": tok["token"]}, timeout=30)
+            except httpx.HTTPError as e:
+                last_err = f"{tok['name']}: {e}"
+                continue
+
+            if resp.status_code == 429:
+                hit_429 = True
+                ra = resp.headers.get("Retry-After") or ""
                 try:
-                    resp = httpx.get(api, headers={"X-Figma-Token": tok["token"]}, timeout=30)
-                except httpx.HTTPError as e:
-                    last_err = f"{tok['name']}: {e}"
-                    resp = None
-                    break
-                if resp.status_code == 429 and attempt < 2:
-                    import time
-                    time.sleep(2 * (attempt + 1))
+                    wait_s = int(float(ra))
+                except (TypeError, ValueError):
+                    wait_s = 60
+                # Chỉ soft-retry nếu chờ ngắn; high-limit (giờ) → vision ngay
+                if wait_s <= 30:
+                    log.warning("Figma 429 — chờ %ss rồi thử lại", wait_s)
+                    time.sleep(wait_s)
+                    try:
+                        resp = httpx.get(api, headers={"X-Figma-Token": tok["token"]}, timeout=30)
+                    except httpx.HTTPError as e:
+                        last_err = f"{tok['name']}: {e}"
+                        continue
+                if resp.status_code == 429:
+                    hrs = max(0, wait_s // 3600)
+                    mins = (wait_s % 3600) // 60
+                    last_err = f"{tok['name']}: HTTP 429 (Retry-After ~{hrs}h{mins}m)"
                     continue
-                if resp.status_code == 200:
-                    data = resp.json()
-                    if node_id:
-                        nodes = data.get("nodes", {})
-                        entry = next(iter(nodes.values()), None)
-                        doc = entry.get("document") if entry else None
-                        if not doc:
-                            return f"ERROR: node {node_id} không tồn tại trong file."
-                    else:
-                        doc = data.get("document")
-                        if not doc:
-                            return "ERROR: response Figma không có document."
-                    name = data.get("name", "")
-                    lines: list[str] = []
-                    _figma_walk(doc, 0, lines)
-                    header = f"Figma file: {name} (key={file_key})"
-                    if node_id:
-                        header += f" — node {node_id}"
-                    return header + "\n" + "\n".join(lines)
-                last_err = f"{tok['name']}: HTTP {resp.status_code}"
-                if resp.status_code != 429:
-                    break
-            # HTTPError hoặc hết retry trên token này → thử token tiếp
+
+            if resp.status_code == 200:
+                data = resp.json()
+                if node_id:
+                    nodes = data.get("nodes", {})
+                    entry = next(iter(nodes.values()), None)
+                    doc = entry.get("document") if entry else None
+                    if not doc:
+                        return f"ERROR: node {node_id} không tồn tại trong file."
+                else:
+                    doc = data.get("document")
+                    if not doc:
+                        return "ERROR: response Figma không có document."
+                name = data.get("name", "")
+                lines: list[str] = []
+                _figma_walk(doc, 0, lines)
+                header = f"Figma file: {name} (key={file_key})"
+                if node_id:
+                    header += f" — node {node_id}"
+                text = header + "\n" + "\n".join(lines)
+                _figma_cache_save(file_key, node_id, text)
+                return text
+
+            last_err = f"{tok['name']}: HTTP {resp.status_code}"
+            if resp.status_code == 403:
+                try:
+                    err = resp.json().get("err") or resp.text[:120]
+                except Exception:
+                    err = resp.text[:120]
+                last_err += f" ({err})"
             continue
+
+        # nodes API fail/429 → export PNG + Vision (quota images thường vẫn còn)
+        if node_id:
+            vision_text = _figma_vision_fallback(file_key, node_id, tokens, artifact_dir=self._artifact_dir())
+            if vision_text:
+                return vision_text
+        elif hit_429:
+            return (
+                f"ERROR: Figma nodes API rate-limit ({last_err}). "
+                "Cần node-id trong URL (vd ?node-id=6695-15995) để fallback export ảnh + Vision. "
+                "ĐỪNG gọi figma_get lại liên tục."
+            )
+
         return (
-            f"ERROR: không token nào truy cập được file ({last_err}). "
-            "File có thể thuộc account khác hoặc bị Figma Limit (HTTP 429) — thêm token hoặc thử lại sau."
+            f"ERROR: không đọc được Figma ({last_err}). "
+            "Token sai/hết hạn, file không có quyền, hoặc rate limit — "
+            "xem Settings → Figma tokens."
         )
 
     # --- board tools ---
+
+    def _project_mcp(self) -> tuple[str, str]:
+        """(mcp_url, token) — mặc định builtin shim."""
+        slug = (self.task.project or "").strip()
+        proj = settings.get_project(slug) if slug else None
+        url = ((proj or {}).get("mcp_url") or "").strip()
+        token = ((proj or {}).get("mcp_token") or "").strip()
+        if not url:
+            url = f"{config.BASE_URL}/mcp/figma"
+        return url, token
+
+    def _tool_mcp_list_tools(self) -> str:
+        from ..mcp import McpError, mcp_list_tools
+
+        url, token = self._project_mcp()
+        try:
+            tools = mcp_list_tools(url, token=token)
+        except McpError as e:
+            return f"ERROR: {e}\nmcp_url: {url}"
+        except Exception as e:
+            return f"ERROR: {type(e).__name__}: {e}\nmcp_url: {url}"
+        if not tools:
+            return f"(không có tool) mcp_url={url}"
+        lines = [f"mcp_url: {url}", f"tools ({len(tools)}):"]
+        for t in tools:
+            name = t.get("name", "?")
+            desc = (t.get("description") or "").replace("\n", " ")[:160]
+            lines.append(f"- {name}: {desc}")
+        return "\n".join(lines)
+
+    def _tool_mcp_call(self, tool: str, arguments: dict | None = None, arguments_json: str = "") -> str:
+        import json as _json
+        from ..mcp import McpError, mcp_call
+
+        tool = (tool or "").strip()
+        if not tool:
+            return "ERROR: thiếu tên tool"
+        args: dict = {}
+        if isinstance(arguments, dict):
+            args = arguments
+        elif (arguments_json or "").strip():
+            try:
+                parsed = _json.loads(arguments_json)
+                if isinstance(parsed, dict):
+                    args = parsed
+                else:
+                    return "ERROR: arguments_json phải là object JSON"
+            except _json.JSONDecodeError as e:
+                return f"ERROR: arguments_json không hợp lệ: {e}"
+        url, token = self._project_mcp()
+        try:
+            return mcp_call(url, tool, args, token=token)
+        except McpError as e:
+            return f"ERROR: {e}\nmcp_url: {url}\ntool: {tool}"
+        except Exception as e:
+            return f"ERROR: {type(e).__name__}: {e}\nmcp_url: {url}"
 
     def _tool_post_message(self, message: str) -> str:
         store.add_event(self.task.id, self.agent, "comment", message)
@@ -657,6 +810,7 @@ class ToolContext:
         severity: str,
         repro_steps: str,
         area: str = "",
+        related_subtask_id: str = "",
     ) -> str:
         if severity not in SEVERITIES:
             return f"ERROR: severity phải là một trong {SEVERITIES}"
@@ -666,9 +820,26 @@ class ToolContext:
         if area_norm not in ("frontend", "backend"):
             area_norm = self._guess_area(f"{description}\n{repro_steps}")
         assignee = "agasa" if area_norm == "backend" else "kid"
+
+        related_sub = None
+        rel_id = (related_subtask_id or "").strip()
+        if rel_id:
+            related_sub = store.get_task(rel_id)
+            if not related_sub:
+                return f"ERROR: related_subtask_id={rel_id!r} không tồn tại"
+            parent_id = self.task.parent_id or self.task.id
+            if related_sub.parent_id and related_sub.parent_id != parent_id and related_sub.id != parent_id:
+                return (
+                    f"ERROR: {rel_id} không thuộc cùng task cha "
+                    f"(expected parent {parent_id}, got {related_sub.parent_id})"
+                )
+
+        rel_note = f" Related build sub: {rel_id}." if rel_id else ""
         bug = store.create_task(
             title=title,
-            description=f"Observed while working on {self.task.id}. {description}",
+            description=(
+                f"Observed while working on {self.task.id}.{rel_note} {description}"
+            ),
             type="bug",
             project=self.task.project,
             project_dir=self.task.project_dir,
@@ -680,13 +851,23 @@ class ToolContext:
             created_by=self.agent,
         )
         store.add_dep(self.task.id, bug.id, "related")
+        if related_sub:
+            store.add_dep(bug.id, related_sub.id, "related")
+            store.add_event(
+                related_sub.id, self.agent, "system",
+                f"Bug {bug.id} gắn từ QA/Security — related sub này: {title}",
+            )
         store.add_event(
             self.task.id, self.agent, "system",
-            f"Bug ticket {bug.id} đã được tạo và link related: {title} (area={area_norm}, {assignee})",
+            f"Bug ticket {bug.id} đã được tạo và link related: {title} "
+            f"(area={area_norm}, {assignee}"
+            + (f", related_sub={rel_id}" if rel_id else "")
+            + ")",
         )
         return (
-            f"OK: đã tạo bug {bug.id} (gắn task cha, {assignee} fix, area={area_norm}) "
-            "— đây là BUG ticket, không phải subtask."
+            f"OK: đã tạo bug {bug.id} (gắn task cha, {assignee} fix, area={area_norm}"
+            + (f", related_subtask={rel_id}" if rel_id else "")
+            + ") — đây là BUG ticket, không phải subtask."
         )
 
     # --- git tools ---
@@ -824,6 +1005,188 @@ def _figma_hex(node: dict) -> str:
     return ""
 
 
+def _figma_cache_path(file_key: str, node_id: str) -> Path:
+    safe_node = (node_id or "root").replace(":", "-").replace("/", "_")[:80]
+    d = Path(config.WORKSPACE_DIR) / "cache" / "figma"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / f"{file_key}_{safe_node}.txt"
+
+
+def _figma_cache_load(file_key: str, node_id: str) -> str:
+    path = _figma_cache_path(file_key, node_id)
+    if not path.is_file():
+        return ""
+    try:
+        text = path.read_text(encoding="utf-8")
+        return text if len(text) > 40 else ""
+    except OSError:
+        return ""
+
+
+def _figma_cache_save(file_key: str, node_id: str, text: str) -> None:
+    try:
+        _figma_cache_path(file_key, node_id).write_text(text, encoding="utf-8")
+    except OSError as e:
+        log.warning("Không lưu cache Figma: %s", e)
+
+
+def _run_coro_sync(coro, timeout: float = 180.0):
+    """Chạy coroutine từ tool sync — an toàn cả khi đã có event loop."""
+    import asyncio
+    import concurrent.futures
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result(timeout=timeout)
+
+
+def _figma_png_path(file_key: str, node_id: str) -> Path:
+    safe_node = (node_id or "root").replace(":", "-").replace("/", "_")[:80]
+    d = Path(config.WORKSPACE_DIR) / "cache" / "figma"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / f"{file_key}_{safe_node}.png"
+
+
+def _figma_export_png(file_key: str, node_id: str, tokens: list[dict]) -> Path | None:
+    """Export frame qua /v1/images — thường không dính cùng quota high-limit của /files."""
+    if not node_id or not tokens:
+        return None
+    dest = _figma_png_path(file_key, node_id)
+    if dest.is_file() and dest.stat().st_size > 1000:
+        return dest
+    api = f"https://api.figma.com/v1/images/{file_key}"
+    for tok in tokens:
+        try:
+            resp = httpx.get(
+                api,
+                params={"ids": node_id, "format": "png", "scale": 1.5},
+                headers={"X-Figma-Token": tok["token"]},
+                timeout=60,
+            )
+        except httpx.HTTPError as e:
+            log.warning("Figma images export failed (%s): %s", tok.get("name"), e)
+            continue
+        if resp.status_code != 200:
+            log.warning(
+                "Figma images HTTP %s (%s): %s",
+                resp.status_code, tok.get("name"), resp.text[:160],
+            )
+            continue
+        img_url = (resp.json().get("images") or {}).get(node_id)
+        if not img_url:
+            continue
+        try:
+            raw = httpx.get(img_url, timeout=120, follow_redirects=True)
+            raw.raise_for_status()
+            dest.write_bytes(raw.content)
+            log.info("Figma PNG saved %s (%s bytes)", dest.name, dest.stat().st_size)
+            return dest
+        except httpx.HTTPError as e:
+            log.warning("Download Figma PNG failed: %s", e)
+            continue
+    return None
+
+
+async def _figma_vision_describe_async(png_path: Path) -> str:
+    """Mô tả UI từ PNG bằng model Vision (lazy import tránh circular)."""
+    from .. import llm
+    from ..core.orchestrator import _prepare_vision_data_url, _vision_candidate_llms
+
+    roles = settings.role_models()
+    if roles.get("vision"):
+        vision = settings.resolve_llm(role="vision")
+    elif config.MODEL_VISION:
+        vision = {
+            "model": config.MODEL_VISION,
+            "base_url": config.LLM_BASE_URL,
+            "api_key": config.LLM_API_KEY,
+            "name": config.MODEL_VISION,
+        }
+    elif roles.get("planner"):
+        vision = settings.resolve_llm(role="planner")
+    else:
+        return ""
+
+    data_url, _ = _prepare_vision_data_url(png_path)
+    prompt = [
+        {
+            "type": "text",
+            "text": (
+                "Bạn là trợ lý vision cho builder UI. Mô tả ảnh Figma bằng tiếng Việt, "
+                "đủ chi tiết để code UI fake-data: layout (sidebar/header/cột), màu nền + accent (#hex nếu đoán được), "
+                "component + text nhìn thấy, dark/light. Không bịa chi tiết không có trong ảnh."
+            ),
+        },
+        {"type": "image_url", "image_url": {"url": data_url}},
+    ]
+    for cfg in _vision_candidate_llms(vision):
+        try:
+            msg = await llm.chat(
+                [{"role": "user", "content": prompt}],
+                model=cfg["model"],
+                base_url=cfg["base_url"],
+                api_key=cfg["api_key"],
+                max_retries=2,
+            )
+            text = (msg.get("content") or "").strip()
+            if text:
+                used = cfg.get("name") or cfg["model"]
+                return f"(Vision model: {used})\n{text}"
+        except Exception as e:
+            log.warning("Figma vision candidate `%s` failed: %s", cfg.get("model"), e)
+    return ""
+
+
+def _figma_vision_fallback(
+    file_key: str,
+    node_id: str,
+    tokens: list[dict],
+    artifact_dir: Path | None = None,
+) -> str:
+    """Khi nodes API fail/429: export PNG + Vision → cache text cho lần gọi sau."""
+    png = _figma_export_png(file_key, node_id, tokens)
+    if not png:
+        return ""
+    if artifact_dir is not None:
+        try:
+            artifact_dir.mkdir(parents=True, exist_ok=True)
+            art = artifact_dir / f"figma-{node_id.replace(':', '-')}.png"
+            if not art.exists() or art.stat().st_size != png.stat().st_size:
+                shutil.copy2(png, art)
+        except OSError as e:
+            log.warning("Copy Figma PNG vào artifacts thất bại: %s", e)
+    try:
+        desc = _run_coro_sync(_figma_vision_describe_async(png), timeout=180.0)
+    except Exception as e:
+        log.exception("Figma vision fallback crashed")
+        return (
+            f"Figma nodes API lỗi — đã export PNG `{png}` nhưng Vision fail: {e}. "
+            "Đọc ảnh trong cache/artifacts hoặc mô tả UI theo task description. "
+            "ĐỪNG gọi figma_get lại."
+        )
+    if not desc:
+        return (
+            f"Figma nodes API lỗi — đã export PNG `{png}` nhưng Vision không trả mô tả. "
+            "ĐỪNG gọi figma_get lại; build theo description task."
+        )
+    text = (
+        f"Figma VISION fallback (key={file_key}) — node {node_id}\n"
+        f"PNG: {png}\n\n"
+        f"{desc}\n\n"
+        "NOTE: nodes API rate-limit/lỗi — dùng mô tả Vision này để code UI. "
+        "ĐỪNG gọi figma_get lại trong task này trừ khi cần node khác."
+    )
+    _figma_cache_save(file_key, node_id, text)
+    try:
+        png.with_suffix(".vision.txt").write_text(desc, encoding="utf-8")
+    except OSError:
+        pass
+    return text
+
+
 _FIGMA_MAX_LINES = 350
 
 
@@ -855,12 +1218,13 @@ def _figma_walk(node: dict, depth: int, lines: list[str]) -> None:
 
 DEFAULT_WORKER_TOOLS = [
     "read_file", "write_file", "list_dir", "search_files",
-    "run_command", "http_get", "figma_get", "git_clone", "git_status",
+    "run_command", "http_get", "figma_get", "mcp_list_tools", "mcp_call",
+    "git_clone", "git_status",
     "post_message", "search_tasks", "create_bug_ticket", "save_start_command",
 ]
 QA_TOOLS = [
     "read_file", "list_dir", "search_files", "run_command",
-    "http_get", "figma_get", "git_clone", "git_status",
+    "http_get", "figma_get", "mcp_list_tools", "mcp_call", "git_clone", "git_status",
     "screenshot_url", "inspect_render", "compare_image",
     "post_message", "search_tasks", "create_bug_ticket", "save_start_command",
 ]

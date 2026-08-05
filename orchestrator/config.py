@@ -5,7 +5,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
-load_dotenv(ROOT_DIR / ".env")
+# override=True: key mới trong .env thắng biến môi trường cũ (Windows/shell)
+load_dotenv(ROOT_DIR / ".env", override=True)
 
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://opencode.ai/zen/v1").rstrip("/")
 LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-v4-flash-free")

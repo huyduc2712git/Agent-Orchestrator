@@ -221,7 +221,7 @@ export function setThinking(on) {
       thinkRow.innerHTML = `
         ${getAgentAvatarHtml("conan")}
         <div class="msg-bubble thinking-bubble">
-          <span class="thinking-text">Conan đang suy nghĩ...</span>
+          <span class="thinking-text">Conan đang suy nghĩ</span>
           <span class="typing-dots">
             <span class="dot"></span>
             <span class="dot"></span>
