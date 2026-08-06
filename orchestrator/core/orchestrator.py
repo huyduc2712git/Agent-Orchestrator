@@ -2188,7 +2188,7 @@ async def _closure_unlocked(parent: Task, subtasks: list[Task]) -> None:
         if b.status == "testing":
             store.set_status(b.id, "done", "conan")
 
-    # Tự động dọn dẹp các file .bak, .tmp, test script tạm tạo trong quá trình agent làm việc
+    # Tự động dọn .bak/.tmp trong project (artifacts dọn khi task → done/archived)
     _cleanup_temp_bak_files(parent)
 
     if parent.review_type == "operator":

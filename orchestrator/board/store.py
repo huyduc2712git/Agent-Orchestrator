@@ -249,6 +249,17 @@ def set_status(task_id: str, new_status: str, actor: str) -> TransitionResult:
             task_id, actor, "status",
             f"{task.status} → {result.final_status}",
         )
+        # Task đóng/archive → xóa artifacts tạm (screenshot QA, figma copy, …)
+        if result.final_status in ("done", "archived"):
+            try:
+                from ..workspace_cleanup import on_task_terminal
+                on_task_terminal(task_id, result.final_status)
+            except Exception:
+                import logging
+                logging.getLogger("board.store").exception(
+                    "Cleanup artifacts sau %s→%s thất bại (non-blocking)",
+                    task.status, result.final_status,
+                )
     if result.note:
         add_event(task_id, "system", "system", result.note)
     return result

@@ -94,6 +94,10 @@ async def upload_chat_image(
                 f"Xin lỗi, xử lý ảnh bị lỗi: {e}. "
                 "Kiểm tra Settings → role Vision đã gán model hỗ trợ ảnh chưa.",
             )
+        finally:
+            # Đã vision xong → không giữ file upload trên disk
+            from ..workspace_cleanup import cleanup_upload_file
+            cleanup_upload_file(dest)
 
     asyncio.create_task(_run())
     return {"ok": True, "image_url": f"/uploads/{filename}", "filename": filename}

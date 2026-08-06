@@ -110,6 +110,14 @@ def _shutdown_all_backends() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     bus.set_main_loop(asyncio.get_running_loop())
+    try:
+        from .workspace_cleanup import cleanup_orphan_artifacts, cleanup_stale_workspace
+        cleanup_stale_workspace()
+        n = cleanup_orphan_artifacts()
+        if n:
+            log.info("Startup: đã dọn %s thư mục artifacts cũ", n)
+    except Exception:
+        log.exception("Startup workspace cleanup failed (non-blocking)")
     asyncio.create_task(scheduler_loop())
     asyncio.create_task(patrol_loop())
     active = settings.active_project()

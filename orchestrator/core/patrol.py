@@ -49,3 +49,9 @@ async def patrol_loop() -> None:
                 store.add_chat("system", text)
         except Exception:
             log.exception("Patrol tick failed")
+        try:
+            from ..workspace_cleanup import cleanup_orphan_artifacts, cleanup_stale_workspace
+            cleanup_stale_workspace()
+            cleanup_orphan_artifacts()
+        except Exception:
+            log.exception("Workspace cleanup tick failed")
