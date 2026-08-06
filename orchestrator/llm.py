@@ -47,6 +47,24 @@ class LLMError(Exception):
     pass
 
 
+def _record_usage(
+    data: dict[str, Any],
+    model: str,
+    base_url: str,
+    *,
+    task_id: str = "",
+) -> None:
+    usage = data.get("usage") if isinstance(data, dict) else None
+    if not usage:
+        return
+    try:
+        from . import settings
+
+        settings.record_llm_usage(model, base_url, usage, task_id=task_id)
+    except Exception:
+        log.debug("Không ghi được LLM usage", exc_info=True)
+
+
 async def chat(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]] | None = None,
@@ -56,6 +74,7 @@ async def chat(
     base_url: str | None = None,
     api_key: str | None = None,
     max_tokens: int | None = None,
+    task_id: str | None = None,
 ) -> dict[str, Any]:
     """Gọi /chat/completions. Có thể chỉ định model + base_url + api_key theo từng tool."""
     payload: dict[str, Any] = {
@@ -67,6 +86,7 @@ async def chat(
     if tools:
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
+    usage_task_id = (task_id or "").strip()
 
     last_err: Exception | None = None
     for attempt in range(1, max_retries + 1):
@@ -124,6 +144,8 @@ async def chat(
             has_tools = bool(message.get("tool_calls"))
             # Model thinking đốt hết budget vào reasoning -> content rỗng/cụt.
             # Nới max_tokens rồi gọi lại thay vì trả về JSON dở dang.
+            # Ghi usage cả khi retry (token vẫn bị trừ ở provider)
+            _record_usage(data, curr_model, curr_base_url, task_id=usage_task_id)
             if finish == "length" and payload["max_tokens"] < config.LLM_MAX_TOKENS_CEILING:
                 grown = min(payload["max_tokens"] * 2, config.LLM_MAX_TOKENS_CEILING)
                 usage = data.get("usage") or {}

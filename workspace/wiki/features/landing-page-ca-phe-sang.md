@@ -1,1 +1,0 @@
-Landing page tĩnh cho quán cà phê Cà Phê Sáng gồm index.html và styles.css. Header hiển thị tên quán, menu 3 món kèm giá, footer địa chỉ. CSS tông nâu ấm. Mở file index.html trong trình duyệt để xem.

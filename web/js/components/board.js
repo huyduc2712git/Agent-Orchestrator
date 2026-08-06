@@ -6,6 +6,22 @@ import { renderSidebar, updateFooterProject } from "./sidebar.js";
 import { openModal } from "./modal.js";
 import { blockTask } from "../api.js";
 
+function fmtTaskTokens(n) {
+  const v = Number(n) || 0;
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+  if (v >= 10_000) return `${(v / 1_000).toFixed(1).replace(/\.0$/, "")}k`;
+  return v.toLocaleString("en-US");
+}
+
+function tokenMetaHtml(t) {
+  const u = t.token_usage || {};
+  const total = u.total_tokens || 0;
+  const prompt = u.prompt_tokens || 0;
+  const completion = u.completion_tokens || 0;
+  const title = `in ${prompt.toLocaleString("en-US")} · out ${completion.toLocaleString("en-US")} · Σ ${total.toLocaleString("en-US")} (task + sub/bug)`;
+  return `<span class="mk-inline">Token</span><span class="mv dim token-usage" title="${escapeHtml(title)}">Σ ${fmtTaskTokens(total)}</span>`;
+}
+
 export function metaRows(t, meta, isLatestDone = false) {
   if (meta.stacked_prs && Array.isArray(meta.stacked_prs)) {
     return `<div class="stacked-prs">` + meta.stacked_prs.map(pr => {
@@ -21,7 +37,7 @@ export function metaRows(t, meta, isLatestDone = false) {
             <span class="mk">CI</span><span class="mv ${ciCls}">${escapeHtml(pr.ci)}</span>
             <span class="mk-inline">Review</span><span class="mv ${revCls}">${escapeHtml(pr.review)}</span>
           </div>
-          <div class="meta-row"><span class="mk">Merge</span><span class="mv ${mergeCls}">${escapeHtml(mergeText)}</span></div>
+          <div class="meta-row"><span class="mk">Merge</span><span class="mv ${mergeCls}">${escapeHtml(mergeText)}</span>${tokenMetaHtml(t)}</div>
         </div>`;
     }).join("") + `</div>`;
   }
@@ -67,7 +83,7 @@ export function metaRows(t, meta, isLatestDone = false) {
   return `
     <div class="meta-row"><span class="mk">PR</span><span class="mv">${escapeHtml(pr)}</span></div>
     <div class="meta-row"><span class="mk">CI</span><span class="mv ${ciCls}">${escapeHtml(ci)}</span><span class="mk-inline">Review</span><span class="mv ${revCls}">${escapeHtml(review)}</span></div>
-    <div class="meta-row"><span class="mk">Merge</span><span class="mv ${mergeCls}">${escapeHtml(merge)}</span></div>`;
+    <div class="meta-row"><span class="mk">Merge</span><span class="mv ${mergeCls}">${escapeHtml(merge)}</span>${tokenMetaHtml(t)}</div>`;
 }
 
 export function attentionFor(t, meta) {
@@ -144,6 +160,16 @@ export function childrenOf(parentId) {
     .sort((a, b) => String(a.id).localeCompare(String(b.id)));
 }
 
+/** Trên card: Done / archived / builder đã xong bước → thu gọn. */
+export function isChildCollapsedOnCard(c) {
+  if (c.status === "done" || c.status === "archived") return true;
+  if (c.status === "testing") {
+    const a = (c.assignee || "").toLowerCase();
+    return !["heiji", "akai", "amuro", "haibara"].includes(a);
+  }
+  return false;
+}
+
 export function subtasksFor(t) {
   const children = childrenOf(t.id);
   const work = children.filter((c) => c.type !== "bug");
@@ -167,19 +193,20 @@ export function subtasksFor(t) {
       </div>`;
   }).join("");
 
+  const doneSummary = (n, kind) => n <= 0 ? "" : `
+      <div class="subtask-card-row sub-done-collapsed${kind === "bug" ? " is-bug" : ""}" title="Mở task để xem danh sách đầy đủ">
+        <span class="subtask-dot"></span>
+        <span class="subtask-title subtask-done-summary">${n} done — mở task để xem</span>
+        <span class="subtask-badge sub-done">Done ✓</span>
+      </div>`;
+
   let html = "";
   if (work.length) {
     // done, hoặc builder đã xong bước (testing) — critic testing vẫn là QA chưa xong
-    const completed = work.filter((c) => {
-      if (c.status === "done") return true;
-      if (c.status === "testing") {
-        const a = (c.assignee || "").toLowerCase();
-        return !["heiji", "akai", "amuro", "haibara"].includes(a);
-      }
-      return false;
-    }).length;
+    const completed = work.filter(isChildCollapsedOnCard).length;
+    const active = work.filter((c) => !isChildCollapsedOnCard(c));
     const percent = Math.round((completed / work.length) * 100);
-    const hasOpenBugs = bugs.some((b) => b.status !== "done" && b.status !== "archived");
+    const hasOpenBugs = bugs.some((b) => !isChildCollapsedOnCard(b));
     const pStyle = getProgressStyle(percent, hasOpenBugs);
     html += `
     <div class="task-card-subtasks">
@@ -190,17 +217,19 @@ export function subtasksFor(t) {
       <div class="subtasks-progress">
         <div class="subtasks-fill" style="width: ${percent}%; background: ${pStyle.fill}"></div>
       </div>
-      <div class="subtasks-list">${renderRows(work, "task")}</div>
+      <div class="subtasks-list">${renderRows(active, "task")}${doneSummary(completed, "task")}</div>
     </div>`;
   }
   if (bugs.length) {
-    const open = bugs.filter((c) => c.status !== "done" && c.status !== "archived").length;
+    const open = bugs.filter((c) => !isChildCollapsedOnCard(c)).length;
+    const active = bugs.filter((c) => !isChildCollapsedOnCard(c));
+    const doneN = bugs.length - open;
     html += `
     <div class="task-card-subtasks task-card-bugs">
       <div class="subtasks-header">
         <span class="subtasks-label">BUGS (${open} / ${bugs.length})</span>
       </div>
-      <div class="subtasks-list">${renderRows(bugs, "bug")}</div>
+      <div class="subtasks-list">${renderRows(active, "bug")}${doneSummary(doneN, "bug")}</div>
     </div>`;
   }
   return html;

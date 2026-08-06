@@ -4,6 +4,7 @@ Phase 1: Tiếp nhận (chat) -> Phase 2: Phân tích & lập kế hoạch (chia
 -> Phase 3: Phân công (scheduler chạy agent) -> Phase 4: Theo dõi (event bus, không chờ)
 -> Phase 5: QA + closure (verify độc lập) -> Phase 6: Ghi nhớ (memory + wiki).
 """
+import asyncio
 import base64
 import json
 import logging
@@ -22,6 +23,9 @@ from ..memory import store as memory
 from .. import settings as app_settings
 
 log = logging.getLogger("orchestrator")
+
+# Tránh scheduler + reload + Chạy lại gọi _closure song song → Conan Final Review lặp
+_closure_locks: dict[str, asyncio.Lock] = {}
 
 PLANNING_PROMPT = """Bạn là Conan — chat orchestrator của một hệ thống multi-agent. Bạn KHÔNG tự code.
 Bạn PHẢI phân tích trước (ảnh mockup, git, project hiện có), chọn stack/workflow hợp lý, rồi mới chia subtask build.
@@ -117,7 +121,7 @@ D) Thứ tự subtask (dependency đúng — KHÔNG nhảy QA):
 KHÔNG bọc trong mảng [...], KHÔNG code fence ```, KHÔNG text trước/sau JSON.
 """
 
-CLOSURE_VERIFY_PROMPT = """Task cha: {title}
+CLOSURE_VERIFY_PROMPT = """Task cha: {task_id} — {title}
 {description}
 
 Các subtask và deliverable:
@@ -138,13 +142,16 @@ LƯU Ý ĐẶC BIỆT:
   VÀ http_get cùng path trên host Live URL (same-origin — FE fetch('/api/...')).
   Direct OK mà Live host /api 404 → REJECT (thiếu proxy/api_base).
   UI ổn mà API không chạy / lỗi → VERDICT: REJECTED.
-Sau khi kiểm tra, post_message một "Final Review" tổng hợp evidence chain (build -> QA -> verify),
-ghi rõ "Live URL verified", "API direct verified", "API same-origin verified".
-Rồi trả lời text cuối:
-- Dòng đầu: "VERDICT: APPROVED" hoặc "VERDICT: REJECTED"
-- Nếu REJECTED: liệt kê từng lỗi (bullet: file/URL/triệu chứng). BẠN KHÔNG tạo bug ticket —
-  hệ thống sẽ trả việc về Heiji (QA) để create_bug_ticket → Kid fix → QA lại.
-  Chỉ review khi QA đã PASS.
+
+BẮT BUỘC post_message ĐÚNG một báo cáo với dòng tiêu đề (không đổi format):
+## Final Review — Conan (Phase 5) — {task_id} {title}
+
+Trong body: evidence chain (build -> QA -> verify), ghi rõ "Live URL verified",
+"API direct verified", "API same-origin verified", và một dòng
+"VERDICT: APPROVED" hoặc "VERDICT: REJECTED".
+KHÔNG post thêm bản "Final Review" ngắn khác — chỉ đúng tiêu đề Phase 5 ở trên.
+Nếu REJECTED: liệt kê từng lỗi (bullet). BẠN KHÔNG tạo bug ticket —
+hệ thống sẽ trả Heiji QA → Kid fix → QA lại.
 """
 
 MEMORY_PROMPT = """Task vừa hoàn thành:
@@ -1389,8 +1396,41 @@ def _gate_critic_stage(
                 f"{', '.join(b.id for b in open_bugs)} (round {n}).",
             )
             return "wait"
+
+        # Có bug đã testing/done nhưng critic vẫn FAIL → chỉ requeue critic verify lại.
+        # KHÔNG mở lại hàng loạt bug đã xong (tránh Kid/Agasa chạy lại từ đầu).
+        has_filed_bugs = any(
+            b.status not in ("archived",)
+            for b in store.list_tasks(parent_id=parent.id, type="bug")
+        )
+        recheck_tag = f"{refail_tag_prefix}-recheck-{_fix_rounds(parent) + 1}"
+        if has_filed_bugs and recheck_tag not in (stage.tags or []):
+            tags = list(stage.tags or [])
+            tags.append(recheck_tag)
+            # Gỡ khóa FAIL kéo dài cũ để Operator/requeue có cơ hội chạy lại
+            tags = [
+                t for t in tags
+                if not t.startswith(f"{refail_tag_prefix}-")
+                or t == recheck_tag
+            ]
+            store.update_task_fields(stage.id, tags=tags)
+            store.set_status(stage.id, "in_progress", "conan")
+            store.set_status(stage.id, "backlog", "conan")
+            store.add_event(
+                stage.id, "conan", "system",
+                f"{display} FAIL nhưng bug đã được fixer xử lý (testing/done) — "
+                f"chạy lại {display} để verify, không mở lại toàn bộ bug.\n"
+                f"{text[:2000]}",
+            )
+            store.add_chat(
+                "conan",
+                f"{parent.id}: {display} FAIL — requeue {display} verify lại "
+                "(giữ nguyên bug đã Done, không chạy fixer từ đầu).",
+            )
+            return "wait"
+
         tag = f"{refail_tag_prefix}-{_fix_rounds(parent) + 1}"
-        if tag not in (stage.tags or []):
+        if tag not in (stage.tags or []) and not has_filed_bugs:
             tags = list(stage.tags or [])
             tags.append(tag)
             store.update_task_fields(stage.id, tags=tags)
@@ -1491,6 +1531,37 @@ def _parse_conan_verdict(result: str) -> bool:
     return "APPROVED" in up and "REJECTED" not in up
 
 
+def _closure_lock_for(parent_id: str) -> asyncio.Lock:
+    lock = _closure_locks.get(parent_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _closure_locks[parent_id] = lock
+    return lock
+
+
+def _is_phase5_final_review(message: str, parent_id: str) -> bool:
+    """Chỉ nhận báo cáo đúng format Phase 5 — không tính bản 'Final Review' ngắn."""
+    msg = message or ""
+    # ## Final Review — Conan (Phase 5) — tsk-8141 ...
+    pat = rf"(?im)^(?:##\s*)?Final Review\s*[—\-]\s*Conan\s*\(Phase\s*5\)\s*[—\-]\s*{re.escape(parent_id)}\b"
+    return bool(re.search(pat, msg))
+
+
+def _conan_final_already_approved(parent_id: str) -> bool:
+    """Đã có Final Review Phase 5 + APPROVED — không verify lại."""
+    seen = 0
+    for ev in reversed(store.list_events(parent_id)):
+        if ev.agent != "conan" or ev.kind != "comment":
+            continue
+        seen += 1
+        msg = ev.message or ""
+        if _is_phase5_final_review(msg, parent_id) and _parse_conan_verdict(msg):
+            return True
+        if seen >= 12:
+            break
+    return False
+
+
 def _open_related_bugs(parent: Task) -> list[Task]:
     """Danh sách bug đang mở của task."""
     under = store.list_tasks(
@@ -1580,6 +1651,83 @@ def _requeue_qa(qa: Task, mark_tag: str, reason: str, chat_msg: str) -> None:
     store.add_chat("conan", chat_msg)
 
 
+def _strip_rerun_lock_tags(tags: list[str] | None) -> list[str]:
+    """Gỡ tag khiến gate 'FAIL kéo dài' khóa parent ngay khi Operator chạy lại."""
+    out: list[str] = []
+    for tag in tags or []:
+        if tag.startswith(("repen-", "resec-", "reqa-", "warn-no-pass")):
+            continue
+        if tag in ("qa-retry", "qa-must-file-bugs", "sec-retry", "pen-retry"):
+            continue
+        out.append(tag)
+    return out
+
+
+def _force_to_backlog(task_id: str, actor: str = "operator") -> bool:
+    """Đưa task về backlog qua đường state machine hợp lệ."""
+    t = store.get_task(task_id)
+    if not t or t.status in ("backlog", "done", "archived"):
+        return False
+    try:
+        if t.status == "testing":
+            store.set_status(task_id, "in_progress", actor)
+            t = store.get_task(task_id)
+        if t and t.status == "review":
+            store.set_status(task_id, "testing", actor)
+            return _force_to_backlog(task_id, actor)
+        if t and t.status in ("in_progress", "blocked", "failed"):
+            store.set_status(task_id, "backlog", actor)
+            return True
+    except Exception:
+        log.exception("force backlog failed for %s", task_id)
+    return False
+
+
+def prepare_parent_for_operator_rerun(parent_id: str) -> list[str]:
+    """Operator Chạy lại: gỡ khóa FAIL kéo dài + requeue critic chưa PASS.
+
+    Trước đây parent chỉ nháy in_progress rồi bị block lại ngay vì Amuro vẫn
+    `testing` + tag `repen-*` + comment FAIL cũ — closure đọc lại và dừng.
+    """
+    requeued: list[str] = []
+    children = store.list_tasks(parent_id=parent_id)
+    for t in children:
+        if t.status in ("done", "archived"):
+            continue
+        agent = (t.assignee or "").lower()
+        if agent not in ("heiji", "akai", "amuro"):
+            if t.status in ("blocked", "failed") and _force_to_backlog(t.id, "operator"):
+                requeued.append(t.id)
+            continue
+
+        new_tags = _strip_rerun_lock_tags(t.tags)
+        if new_tags != list(t.tags or []):
+            store.update_task_fields(t.id, tags=new_tags)
+
+        if t.status not in ("testing", "blocked", "failed"):
+            continue
+
+        if agent == "heiji":
+            verdict, _ = _qa_verdict(parent_id)
+        elif agent == "akai":
+            verdict, _ = _critic_verdict(t.id, "akai", "SECURITY REVIEW")
+        else:
+            verdict, _ = _critic_verdict(t.id, "amuro", "PENETRATION TEST")
+
+        if verdict == "PASS":
+            continue
+
+        if _force_to_backlog(t.id, "operator"):
+            store.add_event(
+                t.id,
+                "operator",
+                "system",
+                f"Operator chạy lại parent — requeue {agent} (verdict={verdict}).",
+            )
+            requeued.append(t.id)
+    return requeued
+
+
 async def re_run_task_closure(parent_id: str) -> None:
     """Operator bấm Chạy lại: tiếp tục lifecycle (scheduler + closure) cho task cha."""
     parent = store.get_task(parent_id)
@@ -1588,6 +1736,19 @@ async def re_run_task_closure(parent_id: str) -> None:
     if parent.status in ("done", "archived"):
         return
     try:
+        requeued = prepare_parent_for_operator_rerun(parent_id)
+        if requeued:
+            store.add_chat(
+                "conan",
+                f"{parent_id}: Operator chạy lại — requeue {', '.join(requeued)} "
+                "(gỡ khóa FAIL kéo dài, chạy critic lại).",
+            )
+        parent = store.get_task(parent_id)
+        if parent and parent.status == "blocked":
+            try:
+                store.set_status(parent_id, "in_progress", "operator")
+            except Exception:
+                pass
         await check_parent_progress(parent_id)
     except Exception:
         log.exception("re_run_task_closure failed for %s", parent_id)
@@ -1703,6 +1864,20 @@ async def check_parent_progress(parent_id: str) -> None:
 
 async def _closure(parent: Task, subtasks: list[Task]) -> None:
     """Phase 5: build hết → Heiji QA từng sub → PASS → Haibara → Akai → Amuro → Conan."""
+    lock = _closure_lock_for(parent.id)
+    async with lock:
+        parent = store.get_task(parent.id) or parent
+        if parent.status in ("done", "archived"):
+            return
+        if _conan_final_already_approved(parent.id):
+            log.info("%s: Conan đã Final Review APPROVED — bỏ qua verify lại", parent.id)
+            return
+        subtasks = store.list_tasks(parent_id=parent.id)
+        await _closure_unlocked(parent, subtasks)
+
+
+async def _closure_unlocked(parent: Task, subtasks: list[Task]) -> None:
+    """Thân Phase 5 — gọi trong lock của _closure."""
     builders = _build_subtasks(subtasks)
     qa_tasks = [t for t in subtasks if t.assignee == "heiji"]
     qa = qa_tasks[-1] if qa_tasks else None
@@ -1893,6 +2068,12 @@ async def _closure(parent: Task, subtasks: list[Task]) -> None:
         return
 
     # Conan Final Review (chỉ sau QA PASS + Security PASS + Pentest PASS)
+    # Re-check: Amuro vừa PASS có thể kích hoạt nhiều check_parent_progress cùng lúc
+    parent = store.get_task(parent.id) or parent
+    if parent.status in ("done", "archived") or _conan_final_already_approved(parent.id):
+        log.info("%s: bỏ qua Final Review — đã APPROVED/done", parent.id)
+        return
+
     conan = AGENTS["conan"]
     preview_url = f"{config.BASE_URL}/preview/{parent.project}/"
     try:
@@ -1900,6 +2081,7 @@ async def _closure(parent: Task, subtasks: list[Task]) -> None:
             "conan",
             conan.system_prompt(),
             CLOSURE_VERIFY_PROMPT.format(
+                task_id=parent.id,
                 title=parent.title,
                 description=parent.description[:1500],
                 deliverables=_collect_deliverables(subtasks),
@@ -1921,8 +2103,21 @@ async def _closure(parent: Task, subtasks: list[Task]) -> None:
         store.add_chat("conan", f"Không thể verify {parent.id} do lỗi: {e}. Task chuyển sang blocked.")
         return
 
-    approved = _parse_conan_verdict(result)
-    store.add_event(parent.id, "conan", "comment", f"Final Review\n\n{result[:6000]}")
+    # Ưu tiên verdict từ comment Phase 5 đã post; fallback text trả về cuối agent
+    phase5_msg = ""
+    for e in reversed(store.list_events(parent.id)[-20:]):
+        if e.agent == "conan" and e.kind == "comment" and _is_phase5_final_review(e.message or "", parent.id):
+            phase5_msg = e.message or ""
+            break
+    approved = _parse_conan_verdict(phase5_msg or result)
+    # Chỉ chấp nhận / ghi đúng format Phase 5 — không ghi bản "Final Review" ngắn
+    if not phase5_msg:
+        store.add_event(
+            parent.id,
+            "conan",
+            "comment",
+            f"## Final Review — Conan (Phase 5) — {parent.id} {parent.title}\n\n{result[:6000]}",
+        )
 
     if not approved:
         # Conan REJECT — Tự động tạo Bug Subtask cho Kid fix + trả Heiji re-QA
@@ -2066,7 +2261,8 @@ async def _phase6_memorize(parent: Task, summary: str) -> None:
                 description=parent.description[:800],
                 summary=summary[:1200],
             ),
-        }], model=summary_llm["model"], base_url=summary_llm["base_url"], api_key=summary_llm["api_key"])
+        }], model=summary_llm["model"], base_url=summary_llm["base_url"], api_key=summary_llm["api_key"],
+            task_id=parent.id)
         data = llm.extract_json(raw)
         if data.get("memory_entry"):
             memory.append_memory(data["memory_entry"], parent.id)

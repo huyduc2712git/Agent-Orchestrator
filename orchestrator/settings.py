@@ -23,6 +23,10 @@ _DEFAULT = {
     "role_models": {},
     # Git tokens cho private repo: [{"name", "host", "token"}]
     "git_tokens": [],
+    # Token usage theo model: {"base_url|model": {prompt_tokens, completion_tokens, total_tokens, calls}}
+    "llm_usage": {},
+    # Token usage theo task_id (sub/bug/parent): cộng dồn mỗi lần gọi LLM gắn task
+    "llm_usage_by_task": {},
     # Chờ user chọn thư mục clone: {url, message, project, suggested_dir}
     "pending_clone": None,
 }
@@ -399,6 +403,114 @@ def llm_tools() -> list[dict]:
 
 def enabled_llm_tools() -> list[dict]:
     return [t for t in llm_tools() if t.get("enabled", True)]
+
+
+def llm_usage_key(base_url: str, model: str) -> str:
+    return f"{(base_url or '').rstrip('/')}|{(model or '').strip()}"
+
+
+def llm_usage_for(base_url: str, model: str) -> dict:
+    key = llm_usage_key(base_url, model)
+    entry = (load().get("llm_usage") or {}).get(key) or {}
+    return {
+        "prompt_tokens": int(entry.get("prompt_tokens") or 0),
+        "completion_tokens": int(entry.get("completion_tokens") or 0),
+        "total_tokens": int(entry.get("total_tokens") or 0),
+        "calls": int(entry.get("calls") or 0),
+    }
+
+
+def _empty_usage() -> dict:
+    return {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "calls": 0,
+    }
+
+
+def llm_usage_for_task(task_id: str) -> dict:
+    tid = (task_id or "").strip()
+    if not tid:
+        return _empty_usage()
+    entry = (load().get("llm_usage_by_task") or {}).get(tid) or {}
+    return {
+        "prompt_tokens": int(entry.get("prompt_tokens") or 0),
+        "completion_tokens": int(entry.get("completion_tokens") or 0),
+        "total_tokens": int(entry.get("total_tokens") or 0),
+        "calls": int(entry.get("calls") or 0),
+    }
+
+
+def llm_usage_sum(task_ids: list[str]) -> dict:
+    """Cộng usage nhiều task (parent + sub/bug)."""
+    out = _empty_usage()
+    for tid in task_ids:
+        u = llm_usage_for_task(tid)
+        out["prompt_tokens"] += u["prompt_tokens"]
+        out["completion_tokens"] += u["completion_tokens"]
+        out["total_tokens"] += u["total_tokens"]
+        out["calls"] += u["calls"]
+    return out
+
+
+def record_llm_usage(
+    model: str,
+    base_url: str,
+    usage: dict | None,
+    *,
+    task_id: str = "",
+) -> None:
+    """Cộng dồn prompt/completion tokens từ response usage của provider."""
+    if not usage or not isinstance(usage, dict):
+        return
+    prompt = int(
+        usage.get("prompt_tokens")
+        or usage.get("input_tokens")
+        or usage.get("prompt_token_count")
+        or 0
+    )
+    completion = int(
+        usage.get("completion_tokens")
+        or usage.get("output_tokens")
+        or usage.get("completion_token_count")
+        or 0
+    )
+    total = int(usage.get("total_tokens") or 0)
+    if total <= 0:
+        total = prompt + completion
+    if prompt <= 0 and completion <= 0 and total <= 0:
+        return
+    key = llm_usage_key(base_url, model)
+    tid = (task_id or "").strip()
+    with _lock:
+        if SETTINGS_PATH.exists():
+            try:
+                data = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                data = json.loads(json.dumps(_DEFAULT))
+        else:
+            data = json.loads(json.dumps(_DEFAULT))
+        usage_map = data.setdefault("llm_usage", {})
+        entry = usage_map.get(key) or _empty_usage()
+        entry["prompt_tokens"] = int(entry.get("prompt_tokens") or 0) + prompt
+        entry["completion_tokens"] = int(entry.get("completion_tokens") or 0) + completion
+        entry["total_tokens"] = int(entry.get("total_tokens") or 0) + total
+        entry["calls"] = int(entry.get("calls") or 0) + 1
+        usage_map[key] = entry
+        data["llm_usage"] = usage_map
+        if tid:
+            by_task = data.setdefault("llm_usage_by_task", {})
+            t_entry = by_task.get(tid) or _empty_usage()
+            t_entry["prompt_tokens"] = int(t_entry.get("prompt_tokens") or 0) + prompt
+            t_entry["completion_tokens"] = int(t_entry.get("completion_tokens") or 0) + completion
+            t_entry["total_tokens"] = int(t_entry.get("total_tokens") or 0) + total
+            t_entry["calls"] = int(t_entry.get("calls") or 0) + 1
+            by_task[tid] = t_entry
+            data["llm_usage_by_task"] = by_task
+        SETTINGS_PATH.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
 
 def role_models() -> dict[str, str]:

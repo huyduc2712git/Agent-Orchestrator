@@ -1,22 +1,27 @@
 .env
-workspace/settings.json
+.venv/
+.pytest_cache/
+*.egg-info/
 __pycache__/
 *.pyc
 *.db
+*.bak
+
+# Workspace runtime / local data (do not push)
+workspace/settings.json
+workspace/settings.json.bak*
 workspace/board.db
 workspace/board.db-*
 workspace/artifacts/
+workspace/cache/
+workspace/uploads/
 workspace/projects/
 workspace/wiki/
 workspace/orch-*.log
 workspace/*.log
-.venv/
-.pytest_cache/
-*.egg-info/
 
 # Ignore markdown files except MEMORY.md, README.md, docs
 *.md
 !README.md
 !docs/**/*.md
 !workspace/memory/MEMORY.md
-

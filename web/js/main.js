@@ -4,7 +4,7 @@ import { state, $, updateFooterProject, taskElapsed } from "./state.js";
 import { loadBoard, loadProjects, blockTask, selectProject } from "./api.js";
 import { renderBoard } from "./components/board.js";
 import { renderSidebar, switchView, goChat, notifyTab } from "./components/sidebar.js";
-import { openModal, openNewProject, setProjectCreateMode, renderEvent } from "./components/modal.js";
+import { openModal, openNewProject, setProjectCreateMode, renderEvent, shouldShowEvent } from "./components/modal.js";
 import { loadChat, sendChatMessage, resizeChatInput, resetChatInputHeight, appendChatMessage, renderChatMessage, setThinking, initChatImageAttach } from "./components/chat.js";
 import { initSettingsEvents, openSettingsModal } from "./components/settings.js";
 
@@ -40,8 +40,9 @@ function connectWS() {
         notifyTab("board");
         if (state.openTaskId === ev.task?.id) openModal(ev.task.id);
       } else if (type === "event") {
-        if (state.openTaskId === ev.event?.task_id) {
-          $("modal-events")?.appendChild(renderEvent(ev.event));
+        if (state.openTaskId === ev.event?.task_id && shouldShowEvent(ev.event)) {
+          const node = renderEvent(ev.event);
+          if (node) $("modal-events")?.appendChild(node);
         }
         loadBoard();
       } else if (type === "thinking") {

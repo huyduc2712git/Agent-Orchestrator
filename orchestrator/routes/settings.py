@@ -25,12 +25,14 @@ async def get_settings():
 
     tools = []
     for t in settings.llm_tools():
+        usage = settings.llm_usage_for(t.get("base_url", ""), t.get("model", ""))
         tools.append({
             "id": t["id"],
             "model": t["model"],
             "base_url": t.get("base_url", ""),
             "enabled": t.get("enabled", True),
             "is_default": t.get("is_default", False) or (t.get("model") in settings.DEFAULT_SYSTEM_MODELS),
+            "usage": usage,
         })
     return {
         "figma_tokens": [

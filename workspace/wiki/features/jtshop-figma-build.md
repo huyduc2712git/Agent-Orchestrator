@@ -1,1 +1,0 @@
-Trang web tĩnh từ thiết kế Figma Jtshop, gồm index.html, styles.css, script.js. Có hiệu ứng click button (modal, toggle, loading, voucher, qty, scroll, cập nhật tổng tiền). Responsive 3 breakpoints. Không inline style. Dùng CSS tông màu từ Figma.

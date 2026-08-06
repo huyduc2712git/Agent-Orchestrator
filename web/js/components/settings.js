@@ -70,6 +70,13 @@ async function loadAndRenderSettings() {
   }
 }
 
+function fmtTokens(n) {
+  const v = Number(n) || 0;
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+  if (v >= 10_000) return `${(v / 1_000).toFixed(1).replace(/\.0$/, "")}k`;
+  return v.toLocaleString("en-US");
+}
+
 function renderLlmTools(tools, hasActiveTasks) {
   const container = $("llm-tool-list");
   if (!container) return;
@@ -85,6 +92,12 @@ function renderLlmTools(tools, hasActiveTasks) {
     row.className = "llm-tool-row" + (t.enabled === false ? " off" : "");
     const isChecked = t.enabled !== false ? "checked" : "";
     const defaultBadge = t.is_default ? '<span class="default-badge">System Default</span>' : "";
+    const u = t.usage || {};
+    const prompt = u.prompt_tokens || 0;
+    const completion = u.completion_tokens || 0;
+    const total = u.total_tokens || prompt + completion;
+    const calls = u.calls || 0;
+    const usageTitle = `${calls} lần gọi · in ${prompt.toLocaleString("en-US")} · out ${completion.toLocaleString("en-US")} · total ${total.toLocaleString("en-US")}`;
 
     row.innerHTML = `
       <input type="checkbox" data-id="${t.id}" class="llm-toggle-chk" ${isChecked} ${t.is_default ? "disabled" : ""} title="${t.is_default ? "Mặc định hệ thống" : "Bật/Tắt model"}" style="cursor:pointer; width:16px; height:16px; accent-color:#3b82f6;"/>
@@ -94,6 +107,13 @@ function renderLlmTools(tools, hasActiveTasks) {
           ${defaultBadge}
         </div>
         <div class="llm-model-url">${escapeHtml(t.base_url || "Built-in System Model")}</div>
+        <div class="llm-model-usage" title="${escapeHtml(usageTitle)}">
+          <span class="llm-usage-in">in ${fmtTokens(prompt)}</span>
+          <span class="llm-usage-sep">·</span>
+          <span class="llm-usage-out">out ${fmtTokens(completion)}</span>
+          <span class="llm-usage-sep">·</span>
+          <span class="llm-usage-total">Σ ${fmtTokens(total)}</span>
+        </div>
       </div>
       <div class="llm-tool-actions">
         ${!t.is_default ? `<button type="button" class="btn-delete-llm-tool" data-id="${t.id}">Xóa</button>` : ""}

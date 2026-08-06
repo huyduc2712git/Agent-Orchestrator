@@ -216,6 +216,25 @@ def update_task_fields(task_id: str, **fields) -> Task | None:
     return task
 
 
+def touch_task(task_id: str) -> None:
+    """Heartbeat: cập nhật updated_at khi agent còn sống (tool call) — không đổi status."""
+    with _lock:
+        _db().execute(
+            "UPDATE tasks SET updated_at = ? WHERE id = ?",
+            [now_iso(), task_id],
+        )
+        _db().commit()
+
+
+def last_event_at(task_id: str) -> str | None:
+    with _lock:
+        row = _db().execute(
+            "SELECT created_at FROM events WHERE task_id = ? ORDER BY created_at DESC LIMIT 1",
+            [task_id],
+        ).fetchone()
+    return row["created_at"] if row else None
+
+
 def set_status(task_id: str, new_status: str, actor: str) -> TransitionResult:
     """Điểm vào duy nhất để đổi status — luôn đi qua transition guard."""
     task = get_task(task_id)

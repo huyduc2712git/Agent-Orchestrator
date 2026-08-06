@@ -16,15 +16,29 @@ log = logging.getLogger("scheduler")
 _COMPLETION_RE = re.compile(
     r"(✅\s*DONE\b|\bDONE\b.{0,40}bug-|"
     r"ĐÃ\s*FIX|DA\s*FIX|ĐÃ\s*HOÀN\s*THÀNH|DA\s*HOAN\s*THANH|"
-    r"##\s*Tổng\s*kết|##\s*Tong\s*ket|"
     r"toàn\s*bộ\s*yêu\s*cầu\s*fix\s*đã\s*được|"
-    r"fix\s*đã\s*được\s*triển\s*khai)",
+    r"fix\s*đã\s*được\s*triển\s*khai|"
+    r"VERDICT:\s*PASS|"
+    r"##\s*[^\n]{0,80}[—\-]\s*PASS\b)",
+    re.I,
+)
+# Amuro/Heiji hay mở đầu "## Tổng kết" cả khi FAIL — không được coi là DONE.
+_FAIL_RE = re.compile(
+    r"(VERDICT:\s*FAIL|"
+    r"##\s*[^\n]{0,80}[—\-]\s*FAIL\b|"
+    r"\bREJECTED\b|"
+    r"Pentest[^\n]{0,40}\bFAIL\b|"
+    r"Security Review[^\n]{0,40}\bFAIL\b)",
     re.I,
 )
 
 
 def _agent_reported_done(task_id: str) -> bool:
-    """True nếu worker từng báo DONE/ĐÃ FIX gần đây — tránh requeue sau reload."""
+    """True nếu worker từng báo DONE/PASS gần đây — tránh requeue sau reload.
+
+    Không coi "## Tổng kết … FAIL" là xong (trước đây orphan reload đẩy Amuro
+    FAIL về testing ngay, làm Operator Chạy lại bị khóa lại).
+    """
     seen = 0
     for ev in reversed(store.list_events(task_id)):
         if ev.kind != "comment":
@@ -32,7 +46,12 @@ def _agent_reported_done(task_id: str) -> bool:
         if ev.agent in ("system", "conan", "operator"):
             continue
         seen += 1
-        if _COMPLETION_RE.search(ev.message or ""):
+        msg = ev.message or ""
+        if _FAIL_RE.search(msg):
+            if seen >= 8:
+                break
+            continue
+        if _COMPLETION_RE.search(msg):
             return True
         if seen >= 8:  # chỉ xét vài comment worker mới nhất
             break
@@ -299,7 +318,7 @@ def auto_recover_stuck_and_blocked_tasks() -> None:
     2. Tự động rerun subtask/task bị blocked (tối đa 3 lần retry).
     """
     now_utc = datetime.now(timezone.utc)
-    STALE_IN_FLIGHT_SEC = 360  # 6 phút không cập nhật → coi worker chết
+    STALE_IN_FLIGHT_SEC = 600  # 10 phút không heartbeat → coi worker chết
 
     # 1b. Worker treo nhưng vẫn chiếm _in_flight → scheduler không bao giờ spawn lại
     stale_ids = []
@@ -308,8 +327,10 @@ def auto_recover_stuck_and_blocked_tasks() -> None:
         if not t:
             _in_flight.discard(tid)
             continue
+        # Ưu tiên mốc event/tool gần nhất (updated_at được touch mỗi tool)
+        stamp = store.last_event_at(tid) or t.updated_at
         try:
-            updated_dt = datetime.fromisoformat(t.updated_at)
+            updated_dt = datetime.fromisoformat(stamp)
             age = (now_utc - updated_dt).total_seconds()
         except Exception:
             age = 0
@@ -318,7 +339,7 @@ def auto_recover_stuck_and_blocked_tasks() -> None:
     for tid in stale_ids:
         t = store.get_task(tid)
         log.warning(
-            "Conan Auto-Recovery: stale _in_flight %s (im %.0fs) — discard + requeue",
+            "Conan Auto-Recovery: stale _in_flight %s (im >%ss) — discard + requeue",
             tid, STALE_IN_FLIGHT_SEC,
         )
         _in_flight.discard(tid)
@@ -329,6 +350,9 @@ def auto_recover_stuck_and_blocked_tasks() -> None:
                     "conan",
                     f"🔄 Conan Auto-Recovery: {tid} ({t.title}) worker treo quá lâu — chạy lại từ backlog.",
                 )
+        elif t and t.status == "backlog":
+            # Desync: đã backlog nhưng còn chiếm slot — chỉ nhả slot
+            log.info("Discard stale in_flight for backlog task %s", tid)
 
     # 1. Quét toàn bộ task/subtask in_progress bị kẹt không có worker thread thực thi
     in_prog = store.list_tasks(status=["in_progress"])

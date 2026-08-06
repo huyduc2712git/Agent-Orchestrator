@@ -434,16 +434,86 @@ class ToolContext:
         """Phát hiện shell khả dụng trên máy đang chạy orchestrator."""
         ps = shutil.which("powershell")
         if ps:
-            return [ps, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command"], "powershell"
+            # -WindowStyle Hidden: không hiện cửa sổ console PowerShell
+            return [
+                ps, "-NoProfile", "-WindowStyle", "Hidden",
+                "-ExecutionPolicy", "Bypass", "-Command",
+            ], "powershell"
         pwsh = shutil.which("pwsh")
         if pwsh:
-            return [pwsh, "-NoProfile", "-Command"], "pwsh"
+            return [
+                pwsh, "-NoProfile", "-WindowStyle", "Hidden", "-Command",
+            ], "pwsh"
         sh = shutil.which("bash") or shutil.which("sh")
         if sh:
             return [sh, "-c"], "bash"
         raise RuntimeError(
             "Không tìm thấy shell khả dụng (powershell/pwsh/bash/sh) trên máy này"
         )
+
+    @staticmethod
+    def _inject_start_process_hidden(text: str) -> str:
+        """Ép mọi Start-Process chạy Hidden — không hiện cửa sổ lên màn hình."""
+        if "Start-Process" not in text and "start-process" not in text.lower():
+            return text
+        out = re.sub(r"-NoNewWindow\b", "", text, flags=re.IGNORECASE)
+        # Đã có -WindowStyle → chuẩn hóa về Hidden
+        out = re.sub(
+            r"-WindowStyle\s+\w+",
+            "-WindowStyle Hidden",
+            out,
+            flags=re.IGNORECASE,
+        )
+        # Chưa có -WindowStyle sau Start-Process
+        out = re.sub(
+            r"\bStart-Process\b(?![^\n]*-WindowStyle)",
+            "Start-Process -WindowStyle Hidden",
+            out,
+            flags=re.IGNORECASE,
+        )
+        return out
+
+    def _force_commands_hidden(self, command: str, shell_kind: str) -> str:
+        """Chặn PowerShell/Start-Process hiện cửa sổ — chỉ chạy ngầm."""
+        if shell_kind not in ("powershell", "pwsh"):
+            return command
+
+        command = self._inject_start_process_hidden(command)
+
+        # Agent hay viết: powershell -File scripts/foo.ps1 (Start-Process nằm trong file)
+        for m in re.finditer(
+            r"(?:^|[\s;|&])(?:powershell(?:\.exe)?|pwsh(?:\.exe)?)\s+[^\n]*?-File\s+[\"']?([^\s\"']+\.ps1)",
+            command,
+            flags=re.IGNORECASE,
+        ):
+            rel = m.group(1)
+            try:
+                path = Path(rel) if Path(rel).is_absolute() else self._resolve(rel)
+            except (ValueError, OSError):
+                continue
+            if not path.is_file():
+                continue
+            try:
+                raw = path.read_text(encoding="utf-8", errors="replace")
+                patched = self._inject_start_process_hidden(raw)
+                if patched != raw:
+                    path.write_text(patched, encoding="utf-8")
+                    log.info(
+                        "Đã ép -WindowStyle Hidden trong %s (chặn hiện cửa sổ)",
+                        path.name,
+                    )
+            except OSError as e:
+                log.warning("Không patch được %s: %s", path, e)
+
+        # Nested: powershell ... → bỏ WindowStyle Normal nếu có
+        command = re.sub(
+            r"(powershell(?:\.exe)?|pwsh(?:\.exe)?)\s+(?!.*-WindowStyle)",
+            r"\1 -WindowStyle Hidden ",
+            command,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+        return command
 
     def _tool_run_command(self, command: str) -> str:
         try:
@@ -455,17 +525,7 @@ class ToolContext:
         if shell_kind == "powershell":
             command = re.sub(r"\s+&&\s+", "; ", command)
 
-        # Start-Process -WindowStyle Hidden chỉ áp dụng khi chạy qua PowerShell/pwsh
-        if shell_kind in ("powershell", "pwsh") and "Start-Process" in command:
-            if "-NoNewWindow" in command:
-                command = re.sub(r"-NoNewWindow\b", "", command, flags=re.IGNORECASE)
-            if "-WindowStyle" not in command:
-                command = re.sub(
-                    r"\bStart-Process\b",
-                    "Start-Process -WindowStyle Hidden",
-                    command,
-                    flags=re.IGNORECASE,
-                )
+        command = self._force_commands_hidden(command, shell_kind)
 
         is_one_off = (
             "python -c" in command
@@ -481,9 +541,16 @@ class ToolContext:
             r"vite|next\s+dev|uvicorn|fastapi\s+dev|node\s+server|"
             r"python\s+-m\s+uvicorn|python\s+app\.py|python\s+main\.py)\b"
         )
+        # -File *.ps1 có Start-Process / start server → coi là background
+        ps1_bg = bool(re.search(r"-File\s+[\"']?\S+\.ps1", command, re.I)) and (
+            "Start-Process" in command
+            or "start_diag" in command.lower()
+            or "server" in command.lower()
+        )
         is_background = not is_one_off and (
             "Start-Process" in command
             or "Start-Job" in command
+            or ps1_bg
             or bool(re.search(server_pattern, command, re.IGNORECASE))
         )
 
@@ -520,12 +587,12 @@ class ToolContext:
                     exit_code = proc.wait(timeout=3.0)
                     result = (
                         f"exit_code={exit_code}\n"
-                        "(Lệnh background/server đã được khởi chạy ngầm thành công)"
+                        "(Lệnh background/server đã được khởi chạy ngầm thành công — không hiện cửa sổ)"
                     )
                 except subprocess.TimeoutExpired:
                     result = (
                         "exit_code=0\n"
-                        "(Lệnh background/server đã được khởi chạy ngầm thành công)"
+                        "(Lệnh background/server đã được khởi chạy ngầm thành công — không hiện cửa sổ)"
                     )
 
                 self._auto_save_start_command(original_cmd)
@@ -553,7 +620,7 @@ class ToolContext:
         except subprocess.TimeoutExpired:
             return (
                 f"ERROR: lệnh vượt quá timeout {config.COMMAND_TIMEOUT_SECONDS}s — "
-                "nếu khởi chạy background server hãy dùng Start-Process (Windows) "
+                "nếu khởi chạy background server hãy dùng Start-Process -WindowStyle Hidden (Windows) "
                 "hoặc lệnh server trực tiếp (npm run dev / node server)"
             )
 

@@ -86,7 +86,12 @@ async def run_agent(
             })
 
         msg = await llm.chat(
-            messages, tools=tools, model=model, base_url=base_url, api_key=api_key
+            messages,
+            tools=tools,
+            model=model,
+            base_url=base_url,
+            api_key=api_key,
+            task_id=task.id,
         )
         messages.append(_sanitize_assistant(msg))
 
@@ -127,6 +132,14 @@ async def run_agent(
             log.info("[%s/%s] tool %s(%s)", agent_name, task.id, name,
                      json.dumps(args, ensure_ascii=False)[:200])
             result = await asyncio.to_thread(ctx.execute, name, args)
+            # Heartbeat: tool call = agent còn sống (tránh Auto-Recovery đẩy backlog nhầm)
+            try:
+                store.touch_task(task.id)
+                cur = store.get_task(task.id)
+                if cur and cur.status == "backlog":
+                    store.set_status(task.id, "in_progress", agent_name)
+            except Exception:
+                log.exception("touch/heartbeat failed for %s", task.id)
             messages.append({
                 "role": "tool",
                 "tool_call_id": tc.get("id", ""),
@@ -151,7 +164,11 @@ async def run_agent(
     })
     try:
         final_msg = await llm.chat(
-            messages, model=model, base_url=base_url, api_key=api_key
+            messages,
+            model=model,
+            base_url=base_url,
+            api_key=api_key,
+            task_id=task.id,
         )  # không truyền tools
         final = (final_msg.get("content") or "").strip()
         if final:

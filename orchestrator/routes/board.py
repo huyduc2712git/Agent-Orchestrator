@@ -19,8 +19,26 @@ class StatusIn(BaseModel):
     status: str
 
 
+def _enrich_token_usage(task_objs: list) -> list[dict]:
+    """Gắn token_usage: parent = tổng parent + mọi sub/bug; child = chỉ chính nó."""
+    children: dict[str, list[str]] = {}
+    for t in task_objs:
+        if t.parent_id:
+            children.setdefault(t.parent_id, []).append(t.id)
+    out: list[dict] = []
+    for t in task_objs:
+        d = t.to_dict()
+        ids = [t.id]
+        if not t.parent_id:
+            ids.extend(children.get(t.id, []))
+        d["token_usage"] = settings.llm_usage_sum(ids)
+        out.append(d)
+    return out
+
+
 def _build_board_payload() -> dict:
-    tasks = [t.to_dict() for t in store.list_tasks(include_archived=False)]
+    task_objs = store.list_tasks(include_archived=False)
+    tasks = _enrich_token_usage(task_objs)
     seen: dict[str, str] = {}
     for t in tasks:
         if t["project"] and t["project"] not in seen:
@@ -41,12 +59,17 @@ async def get_task(task_id: str):
     if not task:
         return JSONResponse({"error": "not found"}, status_code=404)
     children = store.list_tasks(parent_id=task_id)
+    child_ids = [c.id for c in children]
     t_dict = task.to_dict()
+    t_dict["token_usage"] = settings.llm_usage_sum([task.id, *child_ids])
     p_dir = task.project_dir or os.path.join(config.PROJECTS_DIR, task.project)
     t_dict["git_info"] = get_git_info(p_dir)
     return {
         "task": t_dict,
-        "subtasks": [c.to_dict() for c in children],
+        "subtasks": [
+            {**c.to_dict(), "token_usage": settings.llm_usage_for_task(c.id)}
+            for c in children
+        ],
         "events": [e.to_dict() for e in store.list_events(task_id)],
         "deps": store.get_deps(task_id),
     }

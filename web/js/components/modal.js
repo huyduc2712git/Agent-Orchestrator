@@ -172,7 +172,14 @@ function agentEventIcon(agentName, kind) {
   return `<span class="event-icon" style="background:${info.bg};color:${info.fg};border:1px solid ${info.border}">${info.icon}</span>`;
 }
 
+/** Mọi event kind=status (vd testing→blocked) — board đã hiện trạng thái, ẩn khỏi feed. */
+export function shouldShowEvent(e) {
+  if (!e) return false;
+  return (e.kind || "") !== "status";
+}
+
 export function renderEvent(e) {
+  if (!shouldShowEvent(e)) return null;
   const agent = (e.agent || "system").toLowerCase();
   const label = AGENT_ROLE_TITLE[agent] || AGENT_LABEL[agent] || e.agent || "System";
   const div = document.createElement("div");
@@ -495,7 +502,10 @@ export async function openModal(taskId) {
   }
 
   $("modal-events").innerHTML = "";
-  data.events.forEach((e) => $("modal-events").appendChild(renderEvent(e)));
+  (data.events || []).forEach((e) => {
+    const node = renderEvent(e);
+    if (node) $("modal-events").appendChild(node);
+  });
   $("modal-backdrop")?.classList.remove("hidden");
   setupModalScroll();
   renderSidebar();
