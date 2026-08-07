@@ -22,6 +22,18 @@ function tokenMetaHtml(t) {
   return `<span class="mk-inline">Token</span><span class="mv dim token-usage" title="${escapeHtml(title)}">Σ ${fmtTaskTokens(total)}</span>`;
 }
 
+/** Skill pipeline (skip-security…) — hiện dưới hàng PR nếu có. */
+function skillMetaHtml(t) {
+  const tags = (t.tags || []).map((x) => String(x).toLowerCase());
+  if (tags.includes("skip-security") || tags.includes("scope-ui")) {
+    return `<div class="meta-row"><span class="mk">Skill</span><span class="mv pass" title="Bỏ Akai Security + Amuro Pentest sau QA">skip-security</span></div>`;
+  }
+  if (tags.includes("force-security")) {
+    return `<div class="meta-row"><span class="mk">Skill</span><span class="mv warn" title="Bắt buộc Security + Pentest">force-security</span></div>`;
+  }
+  return "";
+}
+
 export function metaRows(t, meta, isLatestDone = false) {
   if (meta.stacked_prs && Array.isArray(meta.stacked_prs)) {
     return `<div class="stacked-prs">` + meta.stacked_prs.map(pr => {
@@ -33,6 +45,7 @@ export function metaRows(t, meta, isLatestDone = false) {
       return `
         <div class="stacked-pr-block">
           <div class="meta-row"><span class="mk">PR</span><span class="mv">${escapeHtml(pr.pr_num)} · ${escapeHtml(pr.pr_status)}</span></div>
+          ${skillMetaHtml(t)}
           <div class="meta-row">
             <span class="mk">CI</span><span class="mv ${ciCls}">${escapeHtml(pr.ci)}</span>
             <span class="mk-inline">Review</span><span class="mv ${revCls}">${escapeHtml(pr.review)}</span>
@@ -82,31 +95,9 @@ export function metaRows(t, meta, isLatestDone = false) {
 
   return `
     <div class="meta-row"><span class="mk">PR</span><span class="mv">${escapeHtml(pr)}</span></div>
+    ${skillMetaHtml(t)}
     <div class="meta-row"><span class="mk">CI</span><span class="mv ${ciCls}">${escapeHtml(ci)}</span><span class="mk-inline">Review</span><span class="mv ${revCls}">${escapeHtml(review)}</span></div>
     <div class="meta-row"><span class="mk">Merge</span><span class="mv ${mergeCls}">${escapeHtml(merge)}</span>${tokenMetaHtml(t)}</div>`;
-}
-
-export function attentionFor(t, meta) {
-  if (!meta.attention_title && t.status !== "blocked" && t.status !== "failed" && t.status !== "backlog") return "";
-
-  const title = meta.attention_title || ((t.status === "blocked" || t.status === "failed") ? (t.type === "bug" ? "Fix failing CI" : "Address requested changes") : "Waiting to start");
-  
-  let titleCls = "yellow";
-  if (title.includes("failing") || title.includes("CI")) titleCls = "red";
-  else if (title.includes("Draft")) titleCls = "dim";
-
-  const sub = meta.attention_sub ? `<div class="attention-sub">${escapeHtml(meta.attention_sub)}</div>` : "";
-  const link = meta.attention_link ? `<a class="attention-link" href="#">${escapeHtml(meta.attention_link)}</a>` : "";
-
-  return `
-    <div class="task-card-attention">
-      <div class="attention-label">NEEDS ATTENTION</div>
-      <div class="attention-content">
-        <span class="attention-title ${titleCls}">${escapeHtml(title)}</span>
-        ${link}
-      </div>
-      ${sub}
-    </div>`;
 }
 
 export function childStatusMeta(status, assignee = "") {
@@ -264,8 +255,7 @@ export function renderCard(t, isLatestDone = false) {
     <div class="task-card-title">${escapeHtml(t.title)}</div>
     <div class="task-card-path">${escapeHtml(path)}</div>
     <div class="task-card-meta">${metaRows(t, meta, isLatestDone)}</div>
-    ${subtasksFor(t)}
-    ${attentionFor(t, meta)}`;
+    ${subtasksFor(t)}`;
   return card;
 }
 

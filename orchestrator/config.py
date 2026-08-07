@@ -45,6 +45,9 @@ WEB_DIR = ROOT_DIR / "web"
 MAX_AGENT_ITERATIONS = 45
 COMMAND_TIMEOUT_SECONDS = 120
 MAX_TOOL_OUTPUT_CHARS = 12_000
+# Giữ N tool result gần nhất đủ dài; các tool cũ bị cắt để giảm input tokens
+TOOL_HISTORY_KEEP_RECENT = int(os.getenv("TOOL_HISTORY_KEEP_RECENT", "6"))
+TOOL_HISTORY_OLD_CHARS = int(os.getenv("TOOL_HISTORY_OLD_CHARS", "500"))
 MAX_CONCURRENT_AGENTS = 1
 CHAT_IMAGE_MAX_BYTES = 8 * 1024 * 1024
 # Nén ảnh trước khi gửi vision API (tránh 413 Payload Too Large — Cloudflare/Workers AI)

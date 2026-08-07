@@ -20,6 +20,61 @@ export function escapeHtml(s) {
   return d.innerHTML;
 }
 
+/** Tách mô tả task một khối thành đoạn dễ đọc trên board modal. */
+export function softBreakTaskDescription(raw) {
+  let s = String(raw || "").trim();
+  if (!s || s.includes("\n")) return s;
+
+  // Section labels thường bị Planner viết liền câu
+  const cues = [
+    /\bStack\s*:/i,
+    /Nguồn\s+ảnh[^:]{0,48}:/i,
+    /\bVerify\s*:/i,
+    /\bDeliverable\s*:/i,
+    /\bRàng\s*buộc\s*:/i,
+    /\bMục\s*tiêu\s*:/i,
+    /\bAcceptance\s*:/i,
+    /\bCập\s*nhật\b/i,
+  ];
+  for (const re of cues) {
+    s = s.replace(new RegExp(`\\s+(${re.source})`, re.flags), "\n\n$1");
+  }
+  // Live URL: chỉ tách khi đứng sau dấu câu / cộng
+  s = s.replace(/([.+])\s+(Live\s+URL\b)/gi, "$1\n$2");
+  // Ràng buộc kiểu "— KHÔNG scaffold…"
+  s = s.replace(/\s+[—–-]\s*(KHÔNG\b)/gi, "\n— $1");
+  // Câu mới sau dấu chấm + chữ hoa (kể cả tiếng Việt)
+  s = s.replace(
+    /([.!?])\s+(?=[A-ZÀÁẢÃẠĂẰẮẲẴẶÂẦẤẨẪẬÈÉẺẼẸÊỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÙÚỦŨỤƯỪỨỬỮỰỲÝỶỸỴĐ])/g,
+    "$1\n",
+  );
+  return s;
+}
+
+/** HTML an toàn cho #modal-desc — giữ xuống dòng, làm nổi label. */
+export function formatTaskDescriptionHtml(raw) {
+  const empty = "(không có mô tả)";
+  if (!raw || !String(raw).trim()) return escapeHtml(empty);
+
+  const text = softBreakTaskDescription(raw);
+  const parts = text.split(/\n+/).map((p) => p.trim()).filter(Boolean);
+  return parts
+    .map((p) => {
+      let line = escapeHtml(p);
+      line = line.replace(
+        /^(Stack|Nguồn ảnh[^:]*|Verify|Live URL|Deliverable|Ràng buộc|Mục tiêu|Acceptance)\s*:/i,
+        "<strong class=\"desc-label\">$1:</strong>",
+      );
+      // Path / URL đọc rõ hơn
+      line = line.replace(
+        /(https?:\/\/[^\s<]+|[A-Za-z]:\\[^\s<]+)/g,
+        "<code class=\"desc-path\">$1</code>",
+      );
+      return `<p class="desc-line">${line}</p>`;
+    })
+    .join("");
+}
+
 export function formatTime(iso) {
   if (!iso) return "";
   try {

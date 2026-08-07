@@ -40,6 +40,23 @@ def _looks_like_fake_tools(text: str) -> bool:
     return False
 
 
+def _compress_tool_history(messages: list[dict]) -> None:
+    """Cắt tool result cũ in-place — giữ vài vòng gần nhất đủ dài để giảm input tokens."""
+    keep = max(2, int(getattr(config, "TOOL_HISTORY_KEEP_RECENT", 6) or 6))
+    old_chars = max(120, int(getattr(config, "TOOL_HISTORY_OLD_CHARS", 500) or 500))
+    tool_idxs = [i for i, m in enumerate(messages) if m.get("role") == "tool"]
+    if len(tool_idxs) <= keep:
+        return
+    for i in tool_idxs[:-keep]:
+        content = messages[i].get("content")
+        if not isinstance(content, str) or len(content) <= old_chars:
+            continue
+        messages[i]["content"] = (
+            content[:old_chars]
+            + f"\n...[older tool output truncated — kept last {keep} full]"
+        )
+
+
 async def run_agent(
     agent_name: str,
     system_prompt: str,
@@ -70,12 +87,23 @@ async def run_agent(
     log.info("[%s/%s] model=%s url=%s", agent_name, task.id, model, base_url)
 
     for iteration in range(1, max_iterations + 1):
-        # Kiểm tra real-time nếu task hoặc task cha đã bị operator dừng/blocked/archived
+        # Dừng ngay nếu task/parent đã đóng (không gồm testing — Conan Final Review chạy khi parent=testing)
         curr_task = store.get_task(task.id)
         parent_task = store.get_task(curr_task.parent_id) if (curr_task and curr_task.parent_id) else None
-        if (curr_task and curr_task.status in ("blocked", "failed", "archived")) or (parent_task and parent_task.status in ("blocked", "failed", "archived")):
-            status_str = parent_task.status if (parent_task and parent_task.status in ("blocked", "failed", "archived")) else (curr_task.status if curr_task else "blocked")
-            log.info("[%s/%s] Task hoặc Task cha status là '%s' — dừng agent loop lập tức.", agent_name, task.id, status_str)
+        self_stop = ("blocked", "failed", "archived", "done")
+        parent_stop = ("blocked", "failed", "archived", "done")
+        if (curr_task and curr_task.status in self_stop) or (
+            parent_task and parent_task.status in parent_stop
+        ):
+            status_str = (
+                parent_task.status
+                if (parent_task and parent_task.status in parent_stop)
+                else (curr_task.status if curr_task else "blocked")
+            )
+            log.info(
+                "[%s/%s] Task/parent status='%s' — dừng agent loop lập tức.",
+                agent_name, task.id, status_str,
+            )
             return f"[Tiến trình bị ngắt do task hoặc task cha chuyển sang {status_str}]"
 
         # Nhắc nhở Agent khi gần chạm giới hạn lượt (còn 5 lượt cuối)
@@ -85,6 +113,7 @@ async def run_agent(
                 "content": f"⚠️ CẢNH BÁO TIẾN ĐỘ: Bạn đã sử dụng {iteration}/{max_iterations} lượt gọi tool và chỉ còn 5 lượt cuối cùng! Hãy tập trung hoàn tất các bước chính, kiểm tra kết quả và tổng kết/báo cáo công việc ngay.",
             })
 
+        _compress_tool_history(messages)
         msg = await llm.chat(
             messages,
             tools=tools,
@@ -136,7 +165,10 @@ async def run_agent(
             try:
                 store.touch_task(task.id)
                 cur = store.get_task(task.id)
-                if cur and cur.status == "backlog":
+                parent = store.get_task(cur.parent_id) if (cur and cur.parent_id) else None
+                if parent and parent.status in ("done", "archived", "blocked", "failed"):
+                    pass  # không revive — vòng lặp sẽ dừng ở iteration sau
+                elif cur and cur.status == "backlog":
                     store.set_status(task.id, "in_progress", agent_name)
             except Exception:
                 log.exception("touch/heartbeat failed for %s", task.id)
@@ -163,6 +195,7 @@ async def run_agent(
         ),
     })
     try:
+        _compress_tool_history(messages)
         final_msg = await llm.chat(
             messages,
             model=model,

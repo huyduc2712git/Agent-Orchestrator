@@ -9,20 +9,20 @@
       type="image/svg+xml"
       href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' rx='115' fill='%23843BFF'/><path d='M 135,360 C 115,250 150,100 260,100 C 370,100 400,180 395,250 C 400,260 430,265 460,270 C 490,275 480,320 455,315 C 420,310 400,310 385,330 C 375,365 360,390 340,405 C 315,415 295,390 280,390 C 265,390 245,425 220,415 C 195,405 185,375 170,380 C 155,385 125,400 135,360 Z' fill='%23FFFFFF'/><ellipse cx='265' cy='215' rx='17' ry='26' fill='%23000000'/><ellipse cx='335' cy='215' rx='17' ry='26' fill='%23000000'/></svg>"
     />
-    <link rel="stylesheet" href="/static/styles.css?v=85" />
-    <!-- Ép Chrome nạp lại cả module graph (api.js/sidebar.js…) — Clear site data KHÔNG xóa HTTP cache module -->
+    <link rel="stylesheet" href="/static/styles.css?v=__ASSET_V__" />
+    <!-- Một version chung — server inject khi GET / (đổi file web/* là đổi v) -->
     <script type="importmap">
       {
         "imports": {
-          "/static/js/main.js": "/static/js/main.js?v=92",
-          "/static/js/api.js": "/static/js/api.js?v=92",
-          "/static/js/state.js": "/static/js/state.js?v=92",
-          "/static/js/constants.js": "/static/js/constants.js?v=92",
-          "/static/js/components/board.js": "/static/js/components/board.js?v=92",
-          "/static/js/components/sidebar.js": "/static/js/components/sidebar.js?v=92",
-          "/static/js/components/modal.js": "/static/js/components/modal.js?v=92",
-          "/static/js/components/chat.js": "/static/js/components/chat.js?v=92",
-          "/static/js/components/settings.js": "/static/js/components/settings.js?v=92"
+          "/static/js/main.js": "/static/js/main.js?v=__ASSET_V__",
+          "/static/js/api.js": "/static/js/api.js?v=__ASSET_V__",
+          "/static/js/state.js": "/static/js/state.js?v=__ASSET_V__",
+          "/static/js/constants.js": "/static/js/constants.js?v=__ASSET_V__",
+          "/static/js/components/board.js": "/static/js/components/board.js?v=__ASSET_V__",
+          "/static/js/components/sidebar.js": "/static/js/components/sidebar.js?v=__ASSET_V__",
+          "/static/js/components/modal.js": "/static/js/components/modal.js?v=__ASSET_V__",
+          "/static/js/components/chat.js": "/static/js/components/chat.js?v=__ASSET_V__",
+          "/static/js/components/settings.js": "/static/js/components/settings.js?v=__ASSET_V__"
         }
       }
     </script>
@@ -235,11 +235,20 @@
                   ×
                 </button>
               </div>
-              <textarea
-                id="chat-text"
-                rows="2"
-                placeholder="Nhập tin nhắn giao việc cho Conan... (đính ảnh bằng nút ghim, rồi Gửi)"
-              ></textarea>
+              <div class="composer-input-wrap">
+                <div
+                  id="chat-mention-menu"
+                  class="chat-mention-menu hidden"
+                  role="listbox"
+                  aria-label="Gợi ý tag"
+                ></div>
+                <div id="chat-skill-chips" class="chat-skill-chips hidden" aria-label="Skills đã gắn"></div>
+                <textarea
+                  id="chat-text"
+                  rows="2"
+                  placeholder="Giao việc cho Conan… (mặc định đủ luồng; gõ @ để thêm skill)"
+                ></textarea>
+              </div>
               <div class="composer-toolbar">
                 <div class="toolbar-left">
                   <input
@@ -801,9 +810,8 @@
       </div>
     </div>
 
-    <script type="module" src="/static/js/main.js?v=92"></script>
     <script type="module">
-      // Bắt lỗi import graph (export mismatch do Chrome cache module cũ)
+      // Một lần load qua importmap (tránh nạp main.js 2 lần → listener đóng/mở sidebar hủy nhau)
       import("/static/js/main.js").catch((e) => {
         console.error("Boot failed:", e);
         const el = document.getElementById("boot-error");

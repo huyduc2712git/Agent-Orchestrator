@@ -41,11 +41,21 @@ def is_under_orchestrator(path: str | Path) -> bool:
         return False
 
 
+_FILE_EXT_REJECT = re.compile(
+    r"\.(png|jpe?g|gif|webp|svg|ico|bmp|pdf|zip|rar|7z|tar|gz|"
+    r"mp3|mp4|wav|mov|avi|mkv|exe|dll|msi|dmg|"
+    r"docx?|xlsx?|pptx?|csv|json|md|txt|log|map)$",
+    re.I,
+)
+
+
 def is_plausible_fs_path(path: str) -> bool:
     """Loại URL bị nhầm thành path (vd https:// → s:\\github.com\\...)."""
     if not path or not str(path).strip():
         return False
-    s = str(path).strip().strip("\"'")
+    s = str(path).strip().strip("\"'`")
+    # markdown/artifact rác hay dính vào cuối path
+    s = s.rstrip("]`'\"")
     low = s.lower().replace("/", "\\")
     # https:// → s:\...
     if re.match(r"^[a-z]:\\\\", low) or re.match(r"^[a-z]://", s.lower()):
@@ -56,6 +66,15 @@ def is_plausible_fs_path(path: str) -> bool:
         return False
     if s.lower().startswith(("http://", "https://", "git@")):
         return False
+    # Path tới file (ảnh upload, …) không phải project_dir
+    if _FILE_EXT_REJECT.search(s):
+        return False
+    try:
+        p = Path(s).expanduser()
+        if p.exists() and p.is_file():
+            return False
+    except (OSError, RuntimeError, ValueError):
+        pass
     # Windows: cần drive:\something hoặc UNC
     if re.match(r"^[A-Za-z]:", s):
         rest = s[2:].lstrip("\\/")
@@ -82,6 +101,13 @@ def extract_target_dir(text: str) -> str | None:
         return None
     # Bỏ URL trước khi quét path — tránh https:// → s:\
     cleaned = _URL_STRIP.sub(" ", text)
+    # Bỏ dòng ảnh đã lưu (tránh nhầm file PNG thành project_dir)
+    cleaned = re.sub(
+        r"\[Ảnh đã lưu tại:[^\]]*\]",
+        " ",
+        cleaned,
+        flags=re.I,
+    )
 
     candidates: list[str] = []
     m = _QUOTED.search(cleaned)
@@ -110,7 +136,8 @@ def wants_default_path(text: str) -> bool:
 
 def _normalize_path(raw: str) -> str:
     s = raw.strip().rstrip(",.;")
-    s = s.strip("\"'")
+    s = s.strip("\"'`")
+    s = s.rstrip("]`'\"")
     # bỏ trailing slash trừ drive root
     if len(s) > 3:
         s = s.rstrip("/\\")
@@ -127,7 +154,7 @@ def resolve_project_dir(
     """Chọn thư mục làm việc / clone.
 
     Ưu tiên:
-      1. explicit (tin nhắn / planner / form)
+      1. explicit (tin nhắn / planner / form) — phải là thư mục, không phải file ảnh
       2. active project_dir nếu KHÔNG nằm trong Orchestrator
       3. projects_root/slug (Settings hoặc default ngoài Orchestrator)
 
@@ -136,13 +163,24 @@ def resolve_project_dir(
     slug = (slug or "project").strip() or "project"
     if explicit and is_plausible_fs_path(explicit):
         p = Path(explicit).expanduser()
+        # Nếu lỡ trỏ vào file (hiếm) → lên thư mục cha hợp lệ
+        try:
+            if p.exists() and p.is_file():
+                p = p.parent
+        except OSError:
+            pass
         return str(p), f"theo đường dẫn bạn chỉ định"
-    # explicit rác (URL nhầm path) → bỏ qua
+    # explicit rác (URL nhầm path / file ảnh) → bỏ qua
     if explicit and not is_plausible_fs_path(explicit):
         explicit = ""
 
     if active_project_dir and is_plausible_fs_path(active_project_dir):
         ap = Path(active_project_dir).expanduser()
+        try:
+            if ap.exists() and ap.is_file():
+                ap = ap.parent
+        except OSError:
+            pass
         if not is_under_orchestrator(ap):
             return str(ap), f"theo project đang chọn"
         # Đã có repo thật trong workspace cũ — giữ để không phá task cũ
@@ -151,6 +189,9 @@ def resolve_project_dir(
                 return str(ap), f"giữ project_dir hiện có (đã có dữ liệu)"
         except OSError:
             pass
+    elif active_project_dir and not is_plausible_fs_path(active_project_dir):
+        # Settings bị ghi nhầm path ảnh — bỏ, dùng mặc định
+        active_project_dir = ""
 
     root = Path(projects_root).expanduser() if projects_root else default_projects_root()
     target = root / slug

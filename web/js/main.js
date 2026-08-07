@@ -5,7 +5,7 @@ import { loadBoard, loadProjects, blockTask, selectProject } from "./api.js";
 import { renderBoard } from "./components/board.js";
 import { renderSidebar, switchView, goChat, notifyTab } from "./components/sidebar.js";
 import { openModal, openNewProject, setProjectCreateMode, renderEvent, shouldShowEvent } from "./components/modal.js";
-import { loadChat, sendChatMessage, resizeChatInput, resetChatInputHeight, appendChatMessage, renderChatMessage, setThinking, initChatImageAttach } from "./components/chat.js";
+import { loadChat, sendChatMessage, resizeChatInput, resetChatInputHeight, appendChatMessage, renderChatMessage, setThinking, initChatImageAttach, handleChatMentionKeydown } from "./components/chat.js";
 import { initSettingsEvents, openSettingsModal } from "./components/settings.js";
 
 // Make key functions available globally for inline HTML events
@@ -73,18 +73,45 @@ function initEvents() {
     btn.addEventListener("click", () => switchView(btn.dataset.view));
   });
 
-  // Sidebar toggle
+  // Sidebar toggle — logo/brand hoặc nút chevron
   const brandToggleBtn = $("brand-toggle-btn") || document.querySelector(".sidebar-brand");
+  const sidebarToggleBtn = $("sidebar-toggle-btn");
+  const applySidebarCollapsed = (collapsed) => {
+    document.body.classList.toggle("sidebar-collapsed", !!collapsed);
+    localStorage.setItem("sidebar-collapsed", collapsed ? "true" : "false");
+    const tip = collapsed ? "Nhấp để mở Sidebar" : "Nhấp để đóng Sidebar";
+    if (brandToggleBtn) {
+      brandToggleBtn.setAttribute("aria-expanded", collapsed ? "false" : "true");
+      brandToggleBtn.title = tip;
+    }
+    if (sidebarToggleBtn) {
+      sidebarToggleBtn.title = tip;
+      sidebarToggleBtn.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    }
+    try { renderSidebar(); } catch (_) { /* ignore */ }
+  };
+  const onToggleSidebar = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    applySidebarCollapsed(!document.body.classList.contains("sidebar-collapsed"));
+  };
   if (brandToggleBtn) {
-    brandToggleBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      document.body.classList.toggle("sidebar-collapsed");
-      const isCollapsed = document.body.classList.contains("sidebar-collapsed");
-      localStorage.setItem("sidebar-collapsed", isCollapsed ? "true" : "false");
+    brandToggleBtn.setAttribute("role", "button");
+    brandToggleBtn.setAttribute("tabindex", "0");
+    brandToggleBtn.addEventListener("click", onToggleSidebar);
+    brandToggleBtn.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      onToggleSidebar(e);
     });
   }
-  if (localStorage.getItem("sidebar-collapsed") === "true") {
-    document.body.classList.add("sidebar-collapsed");
+  // Nút chevron: đừng bubble lên brand (tránh double-toggle nếu sau này gắn listener khác)
+  sidebarToggleBtn?.addEventListener("click", onToggleSidebar);
+
+  const stored = localStorage.getItem("sidebar-collapsed");
+  if (stored === "true" || (stored == null && window.innerWidth <= 768)) {
+    applySidebarCollapsed(true);
+  } else {
+    applySidebarCollapsed(false);
   }
 
   // Quick Action Buttons
@@ -170,11 +197,14 @@ function initEvents() {
   });
 
   $("chat-text")?.addEventListener("keydown", (e) => {
+    if (handleChatMentionKeydown(e)) return;
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
+      // Chỉ gửi khi có nội dung (skill gắn qua @ không tính là tin)
+      if (!(e.target?.value || "").trim()) return;
       $("chat-form")?.requestSubmit();
     }
-  });
+  }, true);
 
   $("chat-text")?.addEventListener("input", resizeChatInput);
 
@@ -204,7 +234,10 @@ function initEvents() {
 }
 
 // Initial Boot
+let _booted = false;
 function boot() {
+  if (_booted) return;
+  _booted = true;
   try {
     initEvents();
     initChatImageAttach();
@@ -217,6 +250,7 @@ function boot() {
     startDurationTicker();
     resizeChatInput();
   } catch (e) {
+    _booted = false;
     console.error("Boot init failed:", e);
     const el = document.getElementById("boot-error");
     if (el) {

@@ -265,6 +265,48 @@ def set_status(task_id: str, new_status: str, actor: str) -> TransitionResult:
     return result
 
 
+def force_close_task(task_id: str, actor: str = "conan") -> bool:
+    """Đóng task về done qua đường state machine hợp lệ.
+
+    `in_progress → done` bị cấm — phải đi `in_progress → testing → done`.
+    Dùng khi parent đã done/archived mà sub vẫn kẹt running.
+    """
+    t = get_task(task_id)
+    if not t:
+        return False
+    if t.status in ("done", "archived"):
+        return True
+
+    # Chuẩn hóa về testing (hoặc archived nếu failed)
+    if t.status == "failed":
+        r = set_status(task_id, "archived", actor)
+        return bool(r.accepted and r.final_status == "archived")
+
+    if t.status == "blocked":
+        set_status(task_id, "backlog", actor)
+        t = get_task(task_id)
+
+    if t and t.status == "review":
+        # Subtask hiếm khi review; operator mới duyệt review→done
+        set_status(task_id, "testing", actor)
+        t = get_task(task_id)
+
+    if t and t.status == "backlog":
+        set_status(task_id, "in_progress", actor)
+        t = get_task(task_id)
+
+    if t and t.status == "in_progress":
+        set_status(task_id, "testing", actor)
+        t = get_task(task_id)
+
+    if t and t.status == "testing":
+        r = set_status(task_id, "done", actor)
+        return bool(r.accepted and r.final_status == "done")
+
+    t = get_task(task_id)
+    return bool(t and t.status in ("done", "archived"))
+
+
 def reset_blocked_children_for_rerun(parent_id: str) -> int:
     """Operator bấm Chạy lại task cha: đưa subtask/bug blocked|failed về backlog.
 

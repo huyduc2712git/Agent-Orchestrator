@@ -82,7 +82,7 @@ export function renderSidebar() {
     };
     group.appendChild(head);
 
-    const isCompact = document.body.classList.contains("sidebar-collapsed") || window.innerWidth <= 768;
+        const isCompact = document.body.classList.contains("sidebar-collapsed");
     const list = document.createElement("div");
     list.className = "project-tasks";
     if (!isExpanded || isCompact) {

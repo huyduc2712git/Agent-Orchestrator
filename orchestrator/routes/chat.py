@@ -22,6 +22,7 @@ _ALLOWED_IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 class ChatIn(BaseModel):
     message: str
     project: str = ""
+    tags: list[str] = []
 
 
 @router.post("/api/chat")
@@ -29,11 +30,19 @@ async def post_chat(body: ChatIn):
     msg = body.message.strip()
     if not msg:
         return JSONResponse({"error": "empty message"}, status_code=400)
-    store.add_chat("user", msg)
+    tags = [t.strip() for t in (body.tags or []) if str(t).strip()]
+    display = msg
+    if tags:
+        display = f"{msg}\n🏷 {', '.join(tags)}"
+    store.add_chat("user", display)
 
     async def _run_chat():
         try:
-            await orchestrator.handle_chat(msg, project=body.project.strip() or None)
+            await orchestrator.handle_chat(
+                msg,
+                project=body.project.strip() or None,
+                tags=tags,
+            )
         except Exception as e:
             log.exception("handle_chat crashed")
             store.add_chat(
@@ -51,6 +60,7 @@ async def upload_chat_image(
     file: UploadFile = File(...),
     message: str = Form(""),
     project: str = Form(""),
+    tags: str = Form(""),
 ):
     """Nhận ảnh đính kèm chat → lưu uploads → analyze_image_and_chat."""
     raw_name = (file.filename or "image.png").strip()
@@ -78,14 +88,20 @@ async def upload_chat_image(
     dest.write_bytes(data)
 
     msg = (message or "").strip()
+    tag_list = [t.strip() for t in (tags or "").split(",") if t.strip()]
     display = msg or f"(đính kèm ảnh `{raw_name}`)"
+    if tag_list:
+        display = f"{display}\n🏷 {', '.join(tag_list)}"
     # Dùng path tương đối /uploads/... để UI render thumbnail ổn định
     store.add_chat("user", f"{display}\n🖼 /uploads/{filename}")
 
     async def _run():
         try:
             await orchestrator.analyze_image_and_chat(
-                msg, str(dest), project=(project or "").strip() or None
+                msg,
+                str(dest),
+                project=(project or "").strip() or None,
+                tags=tag_list,
             )
         except Exception as e:
             log.exception("analyze_image_and_chat crashed")
@@ -94,10 +110,7 @@ async def upload_chat_image(
                 f"Xin lỗi, xử lý ảnh bị lỗi: {e}. "
                 "Kiểm tra Settings → role Vision đã gán model hỗ trợ ảnh chưa.",
             )
-        finally:
-            # Đã vision xong → không giữ file upload trên disk
-            from ..workspace_cleanup import cleanup_upload_file
-            cleanup_upload_file(dest)
+        # Giữ file uploads để chat thumbnail + agent copy vào project — không xóa ngay
 
     asyncio.create_task(_run())
     return {"ok": True, "image_url": f"/uploads/{filename}", "filename": filename}

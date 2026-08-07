@@ -60,22 +60,25 @@ Phân tích và trả về DUY NHẤT một JSON object (không giải thích th
   "reply": "<xác nhận: đã thấy gì (ảnh/git/project), project có app chưa, chọn stack gì + vì sao, sẽ chia việc thế nào>",
   "task": {{
     "title": "<tên task cha>",
-    "description": "<mô tả đầy đủ + stack đã chọn + giả định kỹ thuật>",
+    "description": "<mô tả đầy đủ; dùng \\n giữa các mục Stack / Ràng buộc / Verify — không viết một khối liền>",
     "project": "<slug — BỎ QUA nếu có Active Project ở dưới, hệ thống sẽ gán>",
     "project_dir": "<path tuyệt đối nếu người dùng chỉ định, nếu không thì để chuỗi rỗng>"
   }},
   "subtasks": [
-    {{"title": "...", "description": "<yêu cầu chi tiết + stack/công cụ + ràng buộc; agent không được hỏi lại>",
+    {{"title": "...", "description": "<xuống dòng rõ: việc cần làm\\nStack: …\\nNguồn ảnh/ràng buộc: …\\nVerify: … — agent không được hỏi lại>",
       "agent": "<kid|agasa>", "depends_on": [<index các subtask phải xong trước, tính từ 0>],
       "tags": []}}
   ]
 }}
+— description (task + subtask): BẮT BUỘC có xuống dòng (\\n) giữa các mục; CẤM một đoạn liền mặt dài.
+— Không quyết định bỏ Security/Pentest. Mặc định đủ luồng; chỉ khi user tự gắn `@skip-security` trong tin nhắn mới bỏ Akai/Amuro.
 
 Active Project (nếu có): {active_project}
 — Nếu Active Project khác rỗng: LUÔN dùng đúng slug đó, KHÔNG tạo project mới. Task mới nằm trong project đang chọn.
 — Chỉ đề xuất project mới khi Active Project rỗng VÀ người dùng yêu cầu tạo project mới rõ ràng.
 — project_dir: nếu user ghi đường dẫn tuyệt đối (vd D:\\Dev\\voxbeat, /home/me/apps/foo) → BẮT BUỘC điền đúng vào task.project_dir.
   Không được để trống nếu user đã chỉ định. Không đề xuất clone vào thư mục trong cây AI Orchestrator.
+  CẤM điền path file ảnh/upload (*.png, assets/user-uploads/…) — chỉ thư mục gốc project.
 
 Link context (parser-registry đã quét tin nhắn):
 {link_hints}
@@ -85,6 +88,7 @@ Projects root mặc định (ngoài Orchestrator): {projects_root}
 
 A) Nguồn đầu vào:
 - Có ảnh/mockup/[Mô tả từ ảnh…] → đây là thiết kế UI cần xây hoặc đối chiếu.
+- Nếu có dòng `[Ảnh đã lưu tại: …]` → BẮT BUỘC dùng đúng file đó (copy vào public/src), KHÔNG tự vẽ/SVG lại logo khi user gửi ảnh.
 - Có GitHub/GitLab → ưu tiên clone/mở repo đó, đọc stack từ repo (không đoán bừa).
 - Có Figma → build theo spec Figma (Kid dùng figma_get).
 
@@ -495,13 +499,98 @@ def _vision_candidate_llms(primary: dict) -> list[dict]:
     return out
 
 
+# Tag pipeline do user gắn (UI chip hoặc #tag trong tin nhắn) — Conan không tự suy.
+_USER_PIPELINE_TAGS = frozenset({
+    "skip-security",
+    "scope-ui",
+    "force-security",
+    "security",
+    "deploy-prod",
+    "db-migration",
+})
+
+
+def extract_user_pipeline_tags(message: str, explicit: list[str] | None = None) -> list[str]:
+    """Gộp tag từ API + @tag/#tag trong message. Chỉ nhận whitelist pipeline.
+
+    Ví dụ: "thay logo icon của web @skip-security"
+    """
+    found: list[str] = []
+    for t in explicit or []:
+        key = str(t).strip().lower().lstrip("#@")
+        if key in _USER_PIPELINE_TAGS and key not in found:
+            found.append(key)
+    # @skip-security / #skip-security — cho phép sát chữ hoặc sau khoảng trắng/dấu câu
+    for m in re.finditer(
+        r"(?:^|[\s,;(\[{'\"])[@#]([a-z0-9][a-z0-9_-]{1,40})",
+        message or "",
+        flags=re.I,
+    ):
+        key = m.group(1).lower()
+        if key in _USER_PIPELINE_TAGS and key not in found:
+            found.append(key)
+    return found
+
+
+def _persist_chat_image_for_project(
+    image_path: str | Path,
+    project_slug: str | None,
+) -> dict[str, str]:
+    """Giữ ảnh user gửi: copy vào project + giữ bản uploads để chat thumbnail.
+
+    Returns keys: upload_url, project_path (có thể rỗng), filename
+    """
+    import shutil
+
+    src = Path(image_path)
+    if not src.is_file():
+        return {"upload_url": "", "project_path": "", "filename": ""}
+
+    filename = src.name
+    upload_url = f"/uploads/{filename}"
+
+    # Đảm bảo còn trong workspace/uploads (để GET /uploads/... phục vụ chat)
+    try:
+        config.UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+        upload_dest = (config.UPLOADS_DIR / filename).resolve()
+        if src.resolve() != upload_dest:
+            shutil.copy2(src, upload_dest)
+    except OSError as e:
+        log.warning("Không đồng bộ upload chat %s: %s", filename, e)
+
+    project_path = ""
+    slug = (project_slug or "").strip()
+    if slug:
+        proj = app_settings.get_project(slug) or {}
+        pdir = (proj.get("project_dir") or "").strip()
+        if pdir:
+            try:
+                assets = Path(pdir) / "assets" / "user-uploads"
+                assets.mkdir(parents=True, exist_ok=True)
+                dest = assets / filename
+                if src.resolve() != dest.resolve():
+                    shutil.copy2(src, dest)
+                project_path = str(dest.resolve())
+                log.info("Đã lưu ảnh chat → project: %s", project_path)
+            except OSError as e:
+                log.warning("Không copy ảnh vào project %s: %s", slug, e)
+
+    return {
+        "upload_url": upload_url,
+        "project_path": project_path,
+        "filename": filename,
+    }
+
+
 async def analyze_image_and_chat(
     message: str,
     image_path: str,
     project: str | None = None,
+    tags: list[str] | None = None,
 ) -> None:
     """Đọc ảnh bằng model vision → ghép mô tả text → gọi handle_chat như tin thường.
 
+    Ảnh được giữ trong uploads (chat) + copy vào project/assets/user-uploads (agent dùng).
     Không fallback ngầm sang model text nếu chưa cấu hình role vision / MODEL_VISION.
     """
     roles = app_settings.role_models()
@@ -509,6 +598,9 @@ async def analyze_image_and_chat(
     if not path.is_file():
         store.add_chat("conan", f"Không tìm thấy file ảnh: `{image_path}`")
         return
+
+    active = (project or app_settings.active_project() or "").strip()
+    persisted = _persist_chat_image_for_project(path, active or None)
 
     # Ưu tiên role Vision; nếu chưa gán thì dùng MODEL_VISION env; cuối cùng fallback Planner
     used_fallback = False
@@ -613,18 +705,37 @@ async def analyze_image_and_chat(
         )
         return
 
+    asset_note = ""
+    if persisted.get("project_path"):
+        asset_note = (
+            f"\n[Ảnh đã lưu tại: `{persisted['project_path']}`]\n"
+            "Kid/Agasa PHẢI dùng đúng file này (copy vào public/src khi thay logo/icon) "
+            "— không tự vẽ lại / SVG thay thế trừ khi user yêu cầu."
+        )
+    elif persisted.get("upload_url"):
+        asset_note = (
+            f"\n[Ảnh chat: `{persisted['upload_url']}` — chưa copy được vào project_dir; "
+            "nếu cần file thật, kiểm tra Settings → project path.]"
+        )
+
     enriched = (
         f"{user_text}\n\n"
         f"[Mô tả từ ảnh đính kèm — model `{used_model}`]\n"
         f"{description}"
+        f"{asset_note}"
     )
-    await handle_chat(enriched, project=project)
+    await handle_chat(enriched, project=project, tags=tags)
 
 
-async def handle_chat(user_message: str, project: str | None = None) -> None:
+async def handle_chat(
+    user_message: str,
+    project: str | None = None,
+    tags: list[str] | None = None,
+) -> None:
     """Phase 1 + 2: tiếp nhận, phân tích, lập kế hoạch, trả lời ngay.
 
     `project`: slug project đang chọn trên UI — task mới buộc gắn vào đây.
+    `tags`: tag pipeline user gắn (vd skip-security) — không do Conan suy.
     """
     from ..paths import (
         extract_target_dir,
@@ -639,6 +750,7 @@ async def handle_chat(user_message: str, project: str | None = None) -> None:
     active = (project or app_settings.active_project() or "").strip()
     forced_dir = ""  # path user chọn khi trả lời pending_clone
     accepted_default = False
+    user_pipeline_tags = extract_user_pipeline_tags(user_message, tags)
 
     # Tiếp tục chờ chọn thư mục clone
     pending = app_settings.pending_clone()
@@ -650,6 +762,11 @@ async def handle_chat(user_message: str, project: str | None = None) -> None:
             user_message = pending.get("message") or user_message
             if pending.get("project"):
                 active = pending["project"]
+            # Giữ tag từ tin gốc / chip UI khi user chỉ trả lời path
+            user_pipeline_tags = extract_user_pipeline_tags(
+                user_message,
+                list(pending.get("tags") or []) + list(tags or []),
+            )
             app_settings.clear_pending_clone()
         elif detect_links(user_message):
             # User gửi yêu cầu mới → hủy pending cũ
@@ -839,6 +956,7 @@ async def handle_chat(user_message: str, project: str | None = None) -> None:
                 "message": user_message,
                 "project": active,
                 "suggested_dir": suggested,
+                "tags": user_pipeline_tags,
             })
             store.add_chat(
                 "conan",
@@ -975,6 +1093,10 @@ async def handle_chat(user_message: str, project: str | None = None) -> None:
         for t in link.get("tags") or []:
             if t not in extra_tags:
                 extra_tags.append(t)
+    # Tag pipeline chỉ từ user (UI chip / #tag) — Conan không tự gắn skip-security
+    for t in user_pipeline_tags:
+        if t not in extra_tags:
+            extra_tags.append(t)
 
     git_note = ""
     if git_url:
@@ -1072,11 +1194,19 @@ async def handle_chat(user_message: str, project: str | None = None) -> None:
         for i, s in enumerate(created)
     )
     reply = decision.get("reply", "Đã lập kế hoạch.")
+    if "skip-security" in extra_tags or "scope-ui" in extra_tags:
+        tail = (
+            f"⏱ Chạy tuần tự {seq}. QA (Heiji) sau khi build xong; "
+            f"PASS → Final Review (user gắn skip-security — bỏ Akai/Amuro)."
+        )
+    else:
+        tail = (
+            f"⏱ Chạy tuần tự {seq}. QA (Heiji) chỉ mở sau khi mọi subtask build xong; "
+            f"PASS mới tới Security → Pentest → Final Review."
+        )
     store.add_chat(
         "conan",
-        f"{reply}\n\nKế hoạch ({parent.id} — project `{project_slug}`):\n{plan_lines}\n\n"
-        f"⏱ Chạy tuần tự {seq}. QA (Heiji) chỉ mở sau khi mọi subtask build xong; "
-        f"PASS mới tới Security → Pentest → Final Review.",
+        f"{reply}\n\nKế hoạch ({parent.id} — project `{project_slug}`):\n{plan_lines}\n\n{tail}",
     )
 
 
@@ -1269,7 +1399,26 @@ def project_has_real_app(project_dir: str) -> tuple[bool, str]:
     """True nếu project có app/source thật — không chỉ stub lockfile."""
     if not project_dir:
         return False, "không có project_dir"
-    root = Path(project_dir)
+    root = Path(str(project_dir).strip().strip("\"'`").rstrip("]`'\""))
+    try:
+        # Path trỏ nhầm vào file ảnh → leo lên tìm package.json / index
+        if root.exists() and root.is_file():
+            root = root.parent
+        # user-uploads / assets bên trong repo → leo về root có package.json
+        for _ in range(4):
+            if (root / "package.json").is_file() or (root / ".git").is_dir():
+                break
+            if root.parent == root:
+                break
+            # Chỉ leo khi đang trong assets/public/dist
+            if root.name.lower() in {
+                "user-uploads", "uploads", "assets", "public", "dist", "build", "static",
+            }:
+                root = root.parent
+                continue
+            break
+    except OSError:
+        pass
     if not root.is_dir():
         return False, f"thư mục không tồn tại: {root}"
 
@@ -1295,6 +1444,9 @@ def project_has_real_app(project_dir: str) -> tuple[bool, str]:
             return False, "package.json không đọc được"
         return False, "package.json rỗng / thiếu deps"
 
+    # Static site: có index.html ở root là đủ (không bắt buộc src/)
+    if has_index:
+        return True, "có index.html (static/app)"
     if has_py or has_rn or (has_src and has_index):
         return True, "có source app"
 
@@ -1457,8 +1609,23 @@ def _gate_critic_stage(
     return "proceed"
 
 
+def _should_skip_security_pentest(parent: Task) -> bool:
+    """Bỏ Akai+Amuro chỉ khi có tag tường minh — không đoán bằng keyword.
+
+    - skip-security / scope-ui → skip
+    - force-security / security / deploy-prod / db-migration → không skip
+    """
+    tags = {str(t).lower() for t in (parent.tags or [])}
+    if tags & {"force-security", "security", "deploy-prod", "db-migration"}:
+        return False
+    return bool(tags & {"skip-security", "scope-ui"})
+
+
 def _gate_security_pentest(parent: Task, subtasks: list[Task]) -> str:
     """Gate tuần tự Akai → Amuro trước Final Review (2 lần gọi _gate_critic_stage)."""
+    if _should_skip_security_pentest(parent):
+        log.info("%s: skip Security/Pentest (tag skip-security/scope-ui)", parent.id)
+        return "proceed"
     builders = _build_subtasks(subtasks)
     if builders and not _builders_all_finished(builders):
         log.info("%s: chặn Security — build sub chưa xong hết", parent.id)
@@ -2025,13 +2192,19 @@ async def _closure_unlocked(parent: Task, subtasks: list[Task]) -> None:
         )
         return
 
-    # QA PASS → đóng build sub (board: #1…#n done) trước Security
+    skip_sec = _should_skip_security_pentest(parent)
+
+    # QA PASS → đóng build sub (board: #1…#n done) trước Security / Final Review
     closed = _mark_builders_done(builders)
     if closed:
+        nxt = (
+            "Tiếp Final Review (bỏ qua Security/Pentest — scope UI)."
+            if skip_sec
+            else "Tiếp Security (Akai) → Pentest (Amuro)."
+        )
         store.add_chat(
             "conan",
-            f"{parent.id}: QA PASS — đã đóng {closed} build subtask → done. "
-            "Tiếp Security (Akai) → Pentest (Amuro).",
+            f"{parent.id}: QA PASS — đã đóng {closed} build subtask → done. {nxt}",
         )
 
     # Haibara tổng hợp (QA đã PASS) — chỉ chạy một lần
@@ -2041,6 +2214,11 @@ async def _closure_unlocked(parent: Task, subtasks: list[Task]) -> None:
         try:
             haibara = AGENTS["haibara"]
             deliverables = _collect_deliverables(subtasks)
+            next_stage = (
+                "Conan Final Review (không qua Security/Pentest)."
+                if skip_sec
+                else "Security (Akai) → Pentest (Amuro) → Conan Final Review."
+            )
             haibara_res = await run_agent(
                 "haibara",
                 haibara.system_prompt(),
@@ -2049,7 +2227,7 @@ async def _closure_unlocked(parent: Task, subtasks: list[Task]) -> None:
                 "Hãy post_message lên task hiện tại báo cáo QA Complete:\n"
                 "- Tiêu đề: '## QA Complete — PASS'\n"
                 "- Tóm tắt: deliverable build, Live URL, screenshot links từ Heiji, CSS checks.\n"
-                "- Khuyến nghị: sẵn sàng Security (Akai) → Pentest (Amuro) → Conan Final Review.\n"
+                f"- Khuyến nghị: sẵn sàng {next_stage}\n"
                 "Rồi trả lời text ngắn.",
                 parent,
                 haibara.tools,
@@ -2063,11 +2241,16 @@ async def _closure_unlocked(parent: Task, subtasks: list[Task]) -> None:
         except Exception:
             log.exception("Haibara summary failed (non-blocking)")
 
-    # Akai Security → Amuro Pentest (tuần tự) trước Conan Final Review
+    # Akai Security → Amuro Pentest (có thể skip với scope UI)
     if _gate_security_pentest(parent, subtasks) != "proceed":
         return
+    if skip_sec:
+        store.add_chat(
+            "conan",
+            f"{parent.id}: đã bỏ qua Security/Pentest (tag skip-security / scope UI) — vào Final Review.",
+        )
 
-    # Conan Final Review (chỉ sau QA PASS + Security PASS + Pentest PASS)
+    # Conan Final Review (sau QA PASS; Security/Pentest nếu không skip)
     # Re-check: Amuro vừa PASS có thể kích hoạt nhiều check_parent_progress cùng lúc
     parent = store.get_task(parent.id) or parent
     if parent.status in ("done", "archived") or _conan_final_already_approved(parent.id):
@@ -2179,14 +2362,13 @@ async def _closure_unlocked(parent: Task, subtasks: list[Task]) -> None:
                 pass
         return
 
-    # APPROVED — đóng
+    # APPROVED — đóng mọi sub/bug còn mở (kể cả in_progress — không để Amuro chạy mồ côi)
     for t in subtasks:
-        if t.status == "testing":
-            store.set_status(t.id, "done", "conan")
-    # đóng luôn bug đã xong
+        if t.status not in ("done", "archived"):
+            store.force_close_task(t.id, "conan")
     for b in store.list_tasks(parent_id=parent.id, type="bug"):
-        if b.status == "testing":
-            store.set_status(b.id, "done", "conan")
+        if b.status not in ("done", "archived"):
+            store.force_close_task(b.id, "conan")
 
     # Tự động dọn .bak/.tmp trong project (artifacts dọn khi task → done/archived)
     _cleanup_temp_bak_files(parent)

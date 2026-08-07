@@ -15,12 +15,17 @@ log = logging.getLogger("scheduler")
 
 _COMPLETION_RE = re.compile(
     r"(✅\s*DONE\b|\bDONE\b.{0,40}bug-|"
+    # Kid thường post "✅ Deliverable…" / "✅ … HOÀN THÀNH" / dòng đầu "Hoàn thành sub-…"
+    r"✅\s*\*?\*?Deliverable\b|"
+    r"\bDELIVERABLE\b\s*[—\-:]|"
+    r"✅[^\n]{0,100}(?:HOÀN\s*THÀNH|Hoàn\s*thành)\b|"
     r"ĐÃ\s*FIX|DA\s*FIX|ĐÃ\s*HOÀN\s*THÀNH|DA\s*HOAN\s*THANH|"
+    r"(?:^|\n)\s*(?:✅\s*\*?\*?)?Hoàn\s*thành\b|"
     r"toàn\s*bộ\s*yêu\s*cầu\s*fix\s*đã\s*được|"
     r"fix\s*đã\s*được\s*triển\s*khai|"
     r"VERDICT:\s*PASS|"
     r"##\s*[^\n]{0,80}[—\-]\s*PASS\b)",
-    re.I,
+    re.I | re.M,
 )
 # Amuro/Heiji hay mở đầu "## Tổng kết" cả khi FAIL — không được coi là DONE.
 _FAIL_RE = re.compile(
@@ -218,11 +223,33 @@ async def _run_worker(task: Task) -> None:
         try:
             if task.parent_id:
                 parent = store.get_task(task.parent_id)
-                if parent and parent.status in ("blocked", "failed", "archived"):
-                    log.info("Worker %s hủy chạy %s vì parent task %s ở trạng thái %s", task.assignee, task.id, parent.id, parent.status)
-                    if parent.status in ("blocked", "failed"):
-                        store.set_status(task.id, parent.status, "system")
+                if parent and parent.status in ("blocked", "failed", "archived", "done"):
+                    log.info(
+                        "Worker %s hủy chạy %s vì parent %s ở trạng thái %s",
+                        task.assignee, task.id, parent.id, parent.status,
+                    )
+                    if parent.status in ("done", "archived"):
+                        store.force_close_task(task.id, "conan")
+                    elif parent.status in ("blocked", "failed"):
+                        store.set_status(task.id, parent.status, "conan")
                     return
+
+            # Không spawn lại nếu đã testing/done (tránh race: worker A vừa PASS → testing, B set in_progress)
+            fresh = store.get_task(task.id)
+            if fresh and fresh.status in ("testing", "done", "archived", "review"):
+                log.info(
+                    "Worker %s bỏ qua %s — đã ở %s",
+                    task.assignee, task.id, fresh.status,
+                )
+                return
+            if fresh and fresh.status == "in_progress" and _agent_reported_done(task.id):
+                # Đã có PASS/DONE trong comment nhưng status chưa kịp testing (hoặc bị lật lại)
+                store.set_status(task.id, "testing", "conan")
+                log.info(
+                    "Worker %s bỏ qua %s — đã có DONE/PASS, chuyển testing",
+                    task.assignee, task.id,
+                )
+                return
 
             store.set_status(task.id, "in_progress", task.assignee)
             log.info("Start %s -> %s (%s)", task.id, task.assignee, task.title)
@@ -236,12 +263,14 @@ async def _run_worker(task: Task) -> None:
             curr = store.get_task(task.id)
             parent = store.get_task(task.parent_id) if task.parent_id else None
             if (curr and curr.status in ("blocked", "failed", "archived", "testing", "done")) or (
-                parent and parent.status in ("blocked", "failed", "archived")
+                parent and parent.status in ("blocked", "failed", "archived", "done")
             ):
                 log.info(
                     "Worker %s kết thúc sớm cho %s vì status/parent đã là %s",
                     task.assignee, task.id, curr.status if curr else "?",
                 )
+                if parent and parent.status in ("done", "archived") and curr and curr.status not in ("done", "archived"):
+                    store.force_close_task(task.id, "conan")
                 return
             # Marker do runtime gắn khi hết vòng lặp — không dò cụm từ tự do của LLM
             ITERATION_LIMIT_MARKER = "[ITERATION_LIMIT_REACHED]"
@@ -281,11 +310,17 @@ async def _run_worker(task: Task) -> None:
                         task.id, "conan", "system",
                         f"Chưa chuyển QA: {reason}. Làm lại — scaffold/build tới khi có source thật trên đĩa.",
                     )
-                    store.add_chat(
-                        "conan",
-                        f"⏳ {task.id} ({task.title}): Kid/Agasa báo xong nhưng project chưa có app "
-                        f"({reason}) — giữ backlog, chưa vào QA.",
-                    )
+                    # Chỉ báo chat 1 lần / task — tránh spam mỗi vòng requeue
+                    notify_tag = "no-app-chat"
+                    if notify_tag not in (task.tags or []):
+                        store.add_chat(
+                            "conan",
+                            f"⏳ {task.id} ({task.title}): Kid/Agasa báo xong nhưng project chưa có app "
+                            f"({reason}) — giữ backlog, chưa vào QA.",
+                        )
+                        store.update_task_fields(
+                            task.id, tags=[*(task.tags or []), notify_tag]
+                        )
                 else:
                     store.set_status(task.id, "testing", task.assignee)
             else:
@@ -368,8 +403,14 @@ def auto_recover_stuck_and_blocked_tasks() -> None:
                     parent = store.get_task(t.parent_id)
                     if parent and parent.status in ("blocked", "failed", "archived", "done"):
                         target_st = parent.status if parent.status in ("blocked", "failed") else "done"
-                        log.info("Conan Auto-Recovery: Parent task %s is %s — setting subtask %s -> %s", t.parent_id, parent.status, t.id, target_st)
-                        store.set_status(t.id, target_st, "conan")
+                        log.info(
+                            "Conan Auto-Recovery: Parent task %s is %s — closing subtask %s -> %s",
+                            t.parent_id, parent.status, t.id, target_st,
+                        )
+                        if parent.status in ("done", "archived"):
+                            store.force_close_task(t.id, "conan")
+                        else:
+                            store.set_status(t.id, target_st, "conan")
                         continue
 
                 updated_dt = datetime.fromisoformat(t.updated_at)
@@ -524,11 +565,17 @@ async def scheduler_loop() -> None:
             parent = store.get_task(ot.parent_id)
             if parent and parent.status in ("done", "archived", "failed", "blocked"):
                 if parent.status in ("done", "archived"):
-                    log.info("Parent task %s is %s — marking orphaned subtask %s -> done", ot.parent_id, parent.status, ot.id)
-                    store.set_status(ot.id, "done", "system")
+                    log.info(
+                        "Parent task %s is %s — force-closing orphaned subtask %s",
+                        ot.parent_id, parent.status, ot.id,
+                    )
+                    store.force_close_task(ot.id, "conan")
                 else:
-                    log.info("Parent task %s is %s — setting orphaned subtask %s -> %s", ot.parent_id, parent.status, ot.id, parent.status)
-                    store.set_status(ot.id, parent.status, "system")
+                    log.info(
+                        "Parent task %s is %s — setting orphaned subtask %s -> %s",
+                        ot.parent_id, parent.status, ot.id, parent.status,
+                    )
+                    store.set_status(ot.id, parent.status, "conan")
             else:
                 dest = _finish_or_requeue(ot, reason="Server reload — orphan in_progress")
                 log.info(
@@ -567,9 +614,11 @@ async def scheduler_loop() -> None:
                     parent = store.get_task(t.parent_id)
                     if parent and parent.status in ("done", "archived", "failed", "blocked"):
                         if parent.status == "done":
-                            store.set_status(t.id, "done", "system")
+                            store.force_close_task(t.id, "conan")
+                        elif parent.status == "archived":
+                            store.force_close_task(t.id, "conan")
                         elif parent.status in ("blocked", "failed"):
-                            store.set_status(t.id, parent.status, "system")
+                            store.set_status(t.id, parent.status, "conan")
                         continue
                     # Critic (QA/Security/Pentest) không chạy khi còn build sub đang làm
                     if t.assignee in ("heiji", "akai", "amuro", "haibara"):

@@ -1,7 +1,7 @@
 /* Agent Orchestrator — Modals & Dialogs Component */
 
 import { STATUS_LABEL, AGENT_INFO, getAgentIconHtml } from "../constants.js";
-import { state, $, escapeHtml, taskElapsed, parseMeta, getLatestDoneTaskId, resolveAssignee } from "../state.js";
+import { state, $, escapeHtml, formatTaskDescriptionHtml, taskElapsed, parseMeta, getLatestDoneTaskId, resolveAssignee } from "../state.js";
 import { blockTask } from "../api.js";
 import { childStatusMeta, getProgressStyle } from "./board.js";
 import { renderSidebar } from "./sidebar.js";
@@ -429,7 +429,7 @@ export async function openModal(taskId) {
     actions.appendChild(rbBtn);
   }
 
-  $("modal-desc").textContent = t.description || "(không có mô tả)";
+  $("modal-desc").innerHTML = formatTaskDescriptionHtml(t.description);
 
   // apiSubs processed at top of openModal
 

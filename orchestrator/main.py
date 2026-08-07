@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import bus, config, settings
@@ -153,22 +153,79 @@ async def get_artifact(task_id: str, filename: str):
     return FileResponse(path)
 
 
+# SVG placeholder khi upload đã bị xóa / không còn trên disk
+_MISSING_UPLOAD_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">'
+    '<rect width="128" height="128" rx="12" fill="#1e293b"/>'
+    '<rect x="8" y="8" width="112" height="112" rx="10" fill="none" '
+    'stroke="#475569" stroke-width="2" stroke-dasharray="6 4"/>'
+    '<path d="M36 84l18-22 14 16 12-10 20 24H36z" fill="#334155"/>'
+    '<circle cx="52" cy="48" r="10" fill="#475569"/>'
+    '<text x="64" y="112" text-anchor="middle" fill="#94a3b8" '
+    'font-family="system-ui,sans-serif" font-size="11">ảnh đã xóa</text>'
+    "</svg>"
+)
+
+
 @app.get("/uploads/{filename}")
 async def get_upload(filename: str):
-    """Serve ảnh chat upload — sandbox path chống traversal (giống /artifacts/)."""
+    """Serve ảnh chat upload — thiếu file thì trả thumbnail placeholder (tránh 404 vỡ UI)."""
+    from fastapi.responses import Response
+
     if ".." in filename or "/" in filename or "\\" in filename:
-        return JSONResponse({"error": "path không hợp lệ"}, status_code=404)
+        return Response(
+            content=_MISSING_UPLOAD_SVG.encode("utf-8"),
+            media_type="image/svg+xml",
+            headers={"Cache-Control": "no-cache", "X-Upload-Missing": "1"},
+        )
     path = (config.UPLOADS_DIR / filename).resolve()
     if not str(path).startswith(str(config.UPLOADS_DIR.resolve())):
-        return JSONResponse({"error": "path không hợp lệ"}, status_code=404)
+        return Response(
+            content=_MISSING_UPLOAD_SVG.encode("utf-8"),
+            media_type="image/svg+xml",
+            headers={"Cache-Control": "no-cache", "X-Upload-Missing": "1"},
+        )
     if not path.is_file():
-        return JSONResponse({"error": "file không tồn tại"}, status_code=404)
+        return Response(
+            content=_MISSING_UPLOAD_SVG.encode("utf-8"),
+            media_type="image/svg+xml",
+            headers={"Cache-Control": "no-cache", "X-Upload-Missing": "1"},
+        )
     return FileResponse(path)
 
 
 # ---------- Static UI ----------
 
 app.mount("/static", StaticFiles(directory=config.WEB_DIR), name="static")
+
+_ASSET_V_CACHE: tuple[float, str] | None = None
+
+
+def _web_asset_version() -> str:
+    """Một version chung cho CSS/JS — max mtime trong web/ (tự đổi khi sửa file)."""
+    import time
+
+    global _ASSET_V_CACHE
+    now = time.monotonic()
+    if _ASSET_V_CACHE and (now - _ASSET_V_CACHE[0]) < 2.0:
+        return _ASSET_V_CACHE[1]
+
+    latest = 0
+    try:
+        for path in config.WEB_DIR.rglob("*"):
+            if not path.is_file():
+                continue
+            if path.suffix.lower() not in {".js", ".css", ".html"}:
+                continue
+            try:
+                latest = max(latest, int(path.stat().st_mtime))
+            except OSError:
+                continue
+    except OSError:
+        latest = int(time.time())
+    ver = str(latest or int(time.time()))
+    _ASSET_V_CACHE = (now, ver)
+    return ver
 
 
 @app.middleware("http")
@@ -184,7 +241,10 @@ async def _no_cache_ui_assets(request, call_next):
 
 @app.get("/")
 async def index():
-    return FileResponse(config.WEB_DIR / "index.html")
+    html_path = config.WEB_DIR / "index.html"
+    text = html_path.read_text(encoding="utf-8")
+    text = text.replace("__ASSET_V__", _web_asset_version())
+    return HTMLResponse(text)
 
 
 if __name__ == "__main__":

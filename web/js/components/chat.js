@@ -4,6 +4,82 @@ import { state, $, escapeHtml, formatTime } from "../state.js";
 import { getAgentAvatarHtml } from "../constants.js";
 import { openNewProject } from "./modal.js";
 
+const SKILL_TAG_NAMES = "skip-security|scope-ui|force-security|security|deploy-prod|db-migration";
+const SKILL_TAG_RE = new RegExp(
+  `(^|[\\s,;([{'"])(@(?:${SKILL_TAG_NAMES}))(?=\\b)`,
+  "gi"
+);
+
+function skillPillHtml(tagWithAt, extraClass = "") {
+  const key = String(tagWithAt || "").replace(/^@/, "").toLowerCase();
+  const cls = ["chat-skill-pill", extraClass].filter(Boolean).join(" ");
+  return (
+    `<span class="${cls}" data-skill="${escapeHtml(key)}">` +
+    `<span class="chat-skill-at">@</span>${escapeHtml(key)}` +
+    `</span>`
+  );
+}
+
+const SKILL_TAG_SET = new Set(SKILL_TAG_NAMES.split("|"));
+
+/** Tách @skill khỏi nội dung để render pill riêng (không nhét trong bubble). */
+function splitMessageSkills(message) {
+  const tags = [];
+  let body = String(message || "");
+  body = body.replace(SKILL_TAG_RE, (full, prefix, tag) => {
+    const key = String(tag).replace(/^@/, "").toLowerCase();
+    if (key && !tags.includes(key)) tags.push(key);
+    return prefix;
+  });
+  // Dòng 🏷 từ API (nếu có) — gộp vào pills
+  body = body.replace(/(?:^|\n)🏷\s*([^\n]+)/g, (_, list) => {
+    for (const part of String(list).split(",")) {
+      const key = part.trim().toLowerCase().replace(/^@/, "");
+      if (key && !tags.includes(key) && SKILL_TAG_SET.has(key)) tags.push(key);
+    }
+    return "";
+  });
+  body = body.replace(/\s{2,}/g, " ").trim();
+  return { body, tags };
+}
+
+/** Tin user: ảnh + skills + text tách riêng để layout (ảnh | skills → text dưới). */
+function splitUserMessageParts(message) {
+  const { body: afterSkills, tags } = splitMessageSkills(message);
+  const images = [];
+  let body = afterSkills.replace(
+    /(?:🖼\s*)?(https?:\/\/[^\s<>"']+\/uploads\/[^\s<>"']+|\/uploads\/[^\s<>"']+)/gi,
+    (_full, url) => {
+      if (url && !images.includes(url)) images.push(url);
+      return " ";
+    }
+  );
+  body = body.replace(/\s{2,}/g, " ").trim();
+  return { body, tags, images };
+}
+
+const MISSING_IMG_SVG =
+  "data:image/svg+xml," +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">' +
+      '<rect width="128" height="128" rx="12" fill="#1e293b"/>' +
+      '<rect x="8" y="8" width="112" height="112" rx="10" fill="none" stroke="#475569" stroke-width="2" stroke-dasharray="6 4"/>' +
+      '<path d="M36 84l18-22 14 16 12-10 20 24H36z" fill="#334155"/>' +
+      '<circle cx="52" cy="48" r="10" fill="#475569"/>' +
+      '<text x="64" y="112" text-anchor="middle" fill="#94a3b8" font-family="system-ui,sans-serif" font-size="11">ảnh đã xóa</text>' +
+      "</svg>"
+  );
+
+function userImageHtml(url) {
+  const src = escapeHtml(url);
+  return (
+    `<a href="${src}" target="_blank" rel="noopener" class="chat-img-link" title="Ảnh đính kèm">` +
+    `<img src="${src}" alt="Ảnh đính kèm" class="chat-attach-thumb" loading="lazy" ` +
+    `onerror="this.onerror=null;this.src='${MISSING_IMG_SVG}';this.classList.add('is-missing');if(this.parentElement)this.parentElement.classList.add('is-missing');" />` +
+    `</a>`
+  );
+}
+
 export function formatMarkdownMessage(text) {
   if (!text) return "";
   text = text.replace(
@@ -29,6 +105,14 @@ export function formatMarkdownMessage(text) {
     return `___INLINECODE_${idx}___`;
   });
 
+  // Skills @tag → placeholder trước escape
+  const skills = [];
+  text = text.replace(SKILL_TAG_RE, (full, prefix, tag) => {
+    const idx = skills.length;
+    skills.push(skillPillHtml(tag));
+    return `${prefix}___SKILL_${idx}___`;
+  });
+
   let html = escapeHtml(text);
 
   // Ảnh upload (/uploads/...) → thumbnail, không hiện raw link
@@ -37,8 +121,9 @@ export function formatMarkdownMessage(text) {
     (_full, url) => {
       const src = url;
       return (
-        `<a href="${src}" target="_blank" rel="noopener" class="chat-img-link" title="Mở ảnh gốc">` +
-        `<img src="${src}" alt="Ảnh đính kèm" class="chat-attach-thumb" loading="lazy" />` +
+        `<a href="${src}" target="_blank" rel="noopener" class="chat-img-link" title="Ảnh đính kèm">` +
+        `<img src="${src}" alt="Ảnh đính kèm" class="chat-attach-thumb" loading="lazy" ` +
+        `onerror="this.onerror=null;this.src='${MISSING_IMG_SVG}';this.classList.add('is-missing');if(this.parentElement)this.parentElement.classList.add('is-missing');" />` +
         `</a>`
       );
     }
@@ -60,6 +145,9 @@ export function formatMarkdownMessage(text) {
   html = html.replace(/\*(.*?)\*/g, "<em>$1</em>");
   html = html.replace(/\n/g, "<br/>");
 
+  skills.forEach((pill, i) => {
+    html = html.replace(`___SKILL_${i}___`, pill);
+  });
   inlineCodes.forEach((codeHtml, i) => {
     html = html.replace(`___INLINECODE_${i}___`, codeHtml);
   });
@@ -177,13 +265,36 @@ export function renderChatMessage(m, index) {
   const timeStr = formatTime(m.created_at);
 
   if (isUser) {
+    const { body, tags, images } = splitUserMessageParts(m.message);
+    const topParts = [];
+    if (images.length) {
+      topParts.push(
+        `<div class="msg-user-media">${images.map(userImageHtml).join("")}</div>`
+      );
+    }
+    if (tags.length) {
+      topParts.push(
+        `<div class="msg-skill-row">${tags.map((t) => skillPillHtml(t)).join("")}</div>`
+      );
+    }
+    const topHtml = topParts.length
+      ? `<div class="msg-user-top">${topParts.join("")}</div>`
+      : "";
+    const textHtml = body
+      ? `<div class="msg-user-text">${formatMarkdownMessage(body)}</div>`
+      : "";
+    // Không có gì để hiện (hiếm) — bỏ qua
+    if (!topHtml && !textHtml) return;
     row.innerHTML = `
       <div class="msg-user-wrapper">
         <div class="msg-meta-user">
           ${timeStr ? `<span class="time">${escapeHtml(timeStr)}</span><span class="dot">•</span>` : ""}
           <span class="name">Bạn</span>
         </div>
-        <div class="msg-bubble user-bubble">${formatMarkdownMessage(m.message)}</div>
+        <div class="msg-bubble user-bubble">
+          ${topHtml}
+          ${textHtml}
+        </div>
       </div>
       ${getAgentAvatarHtml("user")}`;
   } else {
@@ -301,8 +412,207 @@ function showPendingImage(file) {
   wrap?.classList.remove("hidden");
 }
 
+const PIPELINE_MENTIONS = [
+  { tag: "skip-security", desc: "Bỏ Akai Security + Amuro Pentest sau QA" },
+  { tag: "scope-ui", desc: "Task chỉ UI — tương đương skip-security" },
+  { tag: "force-security", desc: "Bắt buộc chạy Security + Pentest" },
+  { tag: "deploy-prod", desc: "Deploy prod — cần operator review" },
+  { tag: "db-migration", desc: "Migration DB — cần operator review" },
+];
+
+let _mention = { open: false, items: [], index: 0, start: -1, query: "" };
+/** Skills đã gắn vào composer (pill) — gửi kèm tin nhắn. */
+const _composerSkills = new Set();
+
+function hideMentionMenu() {
+  _mention = { open: false, items: [], index: 0, start: -1, query: "" };
+  const menu = $("chat-mention-menu");
+  if (menu) {
+    menu.classList.add("hidden");
+    menu.innerHTML = "";
+  }
+}
+
+function renderComposerSkills() {
+  const wrap = $("chat-skill-chips");
+  if (!wrap) return;
+  const tags = [..._composerSkills];
+  if (!tags.length) {
+    wrap.classList.add("hidden");
+    wrap.innerHTML = "";
+    return;
+  }
+  wrap.innerHTML = tags
+    .map(
+      (tag) =>
+        `<span class="chat-skill-pill composer" data-skill="${escapeHtml(tag)}">` +
+        `<span class="chat-skill-at">@</span>${escapeHtml(tag)}` +
+        `<button type="button" class="chat-skill-remove" data-skill="${escapeHtml(tag)}" aria-label="Gỡ @${escapeHtml(tag)}">×</button>` +
+        `</span>`
+    )
+    .join("");
+  wrap.classList.remove("hidden");
+  wrap.querySelectorAll(".chat-skill-remove").forEach((btn) => {
+    btn.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      removeComposerSkill(btn.dataset.skill);
+    });
+  });
+}
+
+function addComposerSkill(tag) {
+  const key = String(tag || "").toLowerCase().replace(/^@/, "");
+  if (!key || !PIPELINE_MENTIONS.some((x) => x.tag === key)) return;
+  _composerSkills.add(key);
+  renderComposerSkills();
+}
+
+function removeComposerSkill(tag) {
+  _composerSkills.delete(String(tag || "").toLowerCase());
+  renderComposerSkills();
+}
+
+function clearComposerSkills() {
+  _composerSkills.clear();
+  renderComposerSkills();
+}
+
+function messageWithSkills(text) {
+  let msg = (text || "").trim();
+  for (const tag of _composerSkills) {
+    const re = new RegExp(`(?:^|[\\s,;])@${tag.replace(/-/g, "\\-")}(?=\\s|$)`, "i");
+    if (!re.test(msg)) msg = msg ? `${msg} @${tag}` : `@${tag}`;
+  }
+  return msg.trim();
+}
+
+function renderMentionMenu() {
+  const menu = $("chat-mention-menu");
+  if (!menu) return;
+  if (!_mention.open || !_mention.items.length) {
+    menu.classList.add("hidden");
+    menu.innerHTML = "";
+    return;
+  }
+  menu.innerHTML = _mention.items
+    .map(
+      (it, i) =>
+        `<button type="button" class="chat-mention-item${i === _mention.index ? " is-active" : ""}" data-idx="${i}" role="option">` +
+        `<span class="chat-skill-pill menu"><span class="chat-skill-at">@</span>${escapeHtml(it.tag)}</span>` +
+        `<span class="mention-desc">${escapeHtml(it.desc)}</span>` +
+        `</button>`
+    )
+    .join("");
+  menu.classList.remove("hidden");
+  menu.querySelectorAll(".chat-mention-item").forEach((btn) => {
+    btn.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      const idx = Number(btn.dataset.idx);
+      applyMention(idx);
+    });
+  });
+}
+
+function detectMentionAtCursor(ta) {
+  const pos = ta.selectionStart ?? ta.value.length;
+  const before = ta.value.slice(0, pos);
+  const m = before.match(/(^|[\s,;([{'"])@([a-z0-9_-]*)$/i);
+  if (!m) return null;
+  return { start: pos - m[2].length - 1, query: m[2].toLowerCase() };
+}
+
+function updateMentionSuggest(ta) {
+  const hit = detectMentionAtCursor(ta);
+  if (!hit) {
+    hideMentionMenu();
+    return;
+  }
+  const items = PIPELINE_MENTIONS.filter(
+    (it) => !hit.query || it.tag.startsWith(hit.query) || it.tag.includes(hit.query)
+  );
+  if (!items.length) {
+    hideMentionMenu();
+    return;
+  }
+  _mention = {
+    open: true,
+    items,
+    index: Math.min(_mention.index, items.length - 1),
+    start: hit.start,
+    query: hit.query,
+  };
+  if (_mention.index < 0) _mention.index = 0;
+  renderMentionMenu();
+}
+
+/** Chặn Enter gửi ngay sau khi chọn skill từ menu @. */
+let _blockSendUntil = 0;
+
+function applyMention(idx) {
+  const ta = $("chat-text");
+  const item = _mention.items[idx];
+  if (!ta || !item || _mention.start < 0) return;
+  // Xóa đoạn @đang-gõ — skill hiện ở pill tray, không chèn text thô khó đọc
+  const pos = ta.selectionStart ?? ta.value.length;
+  const before = ta.value.slice(0, _mention.start);
+  const after = ta.value.slice(pos);
+  ta.value = `${before}${after}`.replace(/\s{2,}/g, " ");
+  const caret = Math.min(before.length, ta.value.length);
+  ta.setSelectionRange(caret, caret);
+  addComposerSkill(item.tag);
+  _blockSendUntil = Date.now() + 400;
+  hideMentionMenu();
+  resizeChatInput();
+  ta.focus();
+}
+
+/** true nếu đã xử lý phím (chặn gửi tin / xuống dòng). */
+export function handleChatMentionKeydown(e) {
+  if (_mention.open) {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      e.stopPropagation();
+      _mention.index = (_mention.index + 1) % _mention.items.length;
+      renderMentionMenu();
+      return true;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      e.stopPropagation();
+      _mention.index = (_mention.index - 1 + _mention.items.length) % _mention.items.length;
+      renderMentionMenu();
+      return true;
+    }
+    if (e.key === "Enter" || e.key === "Tab") {
+      e.preventDefault();
+      e.stopPropagation();
+      if (typeof e.stopImmediatePropagation === "function") e.stopImmediatePropagation();
+      applyMention(_mention.index);
+      return true;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      hideMentionMenu();
+      return true;
+    }
+  }
+  // Enter ngay sau khi chọn skill — không gửi
+  if (e.key === "Enter" && Date.now() < _blockSendUntil) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (typeof e.stopImmediatePropagation === "function") e.stopImmediatePropagation();
+    return true;
+  }
+  return false;
+}
+
 export async function sendChatMessage(text) {
-  const msg = (text || "").trim();
+  if (Date.now() < _blockSendUntil) return;
+  const body = (text || "").trim();
+  // Chỉ skill, chưa có nội dung → không gửi (Enter chọn @ không được thành tin)
+  if (!body && !hasPendingImage()) return;
+  const msg = messageWithSkills(text);
   if (!msg && !hasPendingImage()) return;
   if (!state.activeProject) {
     openNewProject("Chọn hoặc tạo project trước khi gửi task.");
@@ -316,6 +626,8 @@ export async function sendChatMessage(text) {
     const ta = $("chat-text");
     if (ta) ta.value = "";
     resetChatInputHeight();
+    hideMentionMenu();
+    clearComposerSkills();
     await sendChatImage(file, msg);
     return;
   }
@@ -323,6 +635,8 @@ export async function sendChatMessage(text) {
   const ta = $("chat-text");
   if (ta) ta.value = "";
   resetChatInputHeight();
+  hideMentionMenu();
+  clearComposerSkills();
   const sendBtn = $("chat-send");
   if (sendBtn) sendBtn.disabled = true;
   state.workStartedAt = Date.now();
@@ -331,7 +645,10 @@ export async function sendChatMessage(text) {
     await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: msg, project: state.activeProject || "" }),
+      body: JSON.stringify({
+        message: msg,
+        project: state.activeProject || "",
+      }),
     });
   } finally {
     if (sendBtn) sendBtn.disabled = false;
@@ -389,5 +706,13 @@ export function initChatImageAttach() {
   $("chat-image-preview-remove")?.addEventListener("click", () => {
     clearPendingImage();
     $("chat-text")?.focus();
+  });
+
+  const ta = $("chat-text");
+  ta?.addEventListener("input", () => updateMentionSuggest(ta));
+  ta?.addEventListener("click", () => updateMentionSuggest(ta));
+  ta?.addEventListener("blur", () => {
+    // delay để mousedown chọn item kịp chạy
+    setTimeout(() => hideMentionMenu(), 150);
   });
 }

@@ -410,14 +410,38 @@ class ToolContext:
             lines.append(f"{kind}  {child.relative_to(self.project_dir)}")
         return "\n".join(lines) or "(trống)"
 
+    # Bỏ qua khi search — tránh treo hàng phút trong node_modules/dist
+    _SEARCH_SKIP_DIRS = frozenset({
+        "node_modules", ".git", ".svn", ".hg", "__pycache__", ".venv", "venv",
+        "dist", "build", ".next", ".nuxt", "coverage", ".turbo", ".cache",
+        "qa-shots", ".playwright",
+    })
+
     def _tool_search_files(self, query: str, glob: str = "**/*") -> str:
         if "**" not in glob:
             glob = f"**/{glob}"
         hits = []
         q = query.lower()
+        scanned = 0
+        max_files = 800
         for f in self.project_dir.glob(glob):
-            if not f.is_file() or f.stat().st_size > 1_000_000:
+            if not f.is_file():
                 continue
+            try:
+                rel_parts = f.relative_to(self.project_dir).parts
+            except ValueError:
+                continue
+            if any(p in self._SEARCH_SKIP_DIRS for p in rel_parts):
+                continue
+            try:
+                if f.stat().st_size > 1_000_000:
+                    continue
+            except OSError:
+                continue
+            scanned += 1
+            if scanned > max_files:
+                extra = f"\n...[đã quét {max_files} file — thu hẹp glob, vd src/**/*.tsx]"
+                return ("\n".join(hits) + extra) if hits else f"(không tìm thấy){extra}"
             try:
                 for i, line in enumerate(f.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
                     if q in line.lower():
