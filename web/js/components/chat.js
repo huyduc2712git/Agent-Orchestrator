@@ -331,13 +331,8 @@ export function setThinking(on) {
       thinkRow.className = "msg-row conan thinking";
       thinkRow.innerHTML = `
         ${getAgentAvatarHtml("conan")}
-        <div class="msg-bubble thinking-bubble">
-          <span class="thinking-text">Conan đang suy nghĩ</span>
-          <span class="typing-dots">
-            <span class="dot"></span>
-            <span class="dot"></span>
-            <span class="dot"></span>
-          </span>
+        <div class="msg-bubble thinking-bubble" aria-live="polite" aria-label="Conan đang suy nghĩ">
+          <span class="thinking-text">Conan đang suy nghĩ</span><span class="thinking-ellipsis" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span>
         </div>`;
     }
     box.appendChild(thinkRow);
@@ -420,6 +415,45 @@ const PIPELINE_MENTIONS = [
   { tag: "db-migration", desc: "Migration DB — cần operator review" },
 ];
 
+/** Pipeline + workflow skills từ GET /api/skills */
+let _mentionCatalog = [...PIPELINE_MENTIONS];
+
+export async function loadSkillMentions() {
+  try {
+    const res = await fetch("/api/skills");
+    const data = await res.json();
+    const skills = (data.skills || []).map((s) => ({
+      tag: String(s.name || "").toLowerCase(),
+      desc: String(s.description || s.source || "").slice(0, 120),
+      source: s.source,
+      runAs: s.runAs || s.run_as || "inline",
+      invocation: s.invocation || "auto",
+    })).filter((s) => {
+      if (!s.tag) return false;
+      // Agent subagent profiles = system prompts, không gắn @skill trên task
+      if (s.source === "agent" && (s.invocation === "manual" || s.runAs === "subagent")) {
+        return false;
+      }
+      return true;
+    });
+    const seen = new Set(PIPELINE_MENTIONS.map((x) => x.tag));
+    // Ưu tiên: pipeline → native → reasonix → workspace → addy (Addy dài, đừng che skill hay dùng)
+    const sourceRank = { native: 0, reasonix: 1, workspace: 2, addy: 3, agent: 9 };
+    const playbooks = skills
+      .filter((s) => !seen.has(s.tag))
+      .sort((a, b) => {
+        const ra = sourceRank[a.source] ?? 5;
+        const rb = sourceRank[b.source] ?? 5;
+        if (ra !== rb) return ra - rb;
+        return a.tag.localeCompare(b.tag);
+      });
+    _mentionCatalog = [...PIPELINE_MENTIONS, ...playbooks];
+  } catch (e) {
+    console.warn("loadSkillMentions failed", e);
+    _mentionCatalog = [...PIPELINE_MENTIONS];
+  }
+}
+
 let _mention = { open: false, items: [], index: 0, start: -1, query: "" };
 /** Skills đã gắn vào composer (pill) — gửi kèm tin nhắn. */
 const _composerSkills = new Set();
@@ -462,9 +496,16 @@ function renderComposerSkills() {
 
 function addComposerSkill(tag) {
   const key = String(tag || "").toLowerCase().replace(/^@/, "");
-  if (!key || !PIPELINE_MENTIONS.some((x) => x.tag === key)) return;
+  if (!key || !_mentionCatalog.some((x) => x.tag === key)) return;
   _composerSkills.add(key);
   renderComposerSkills();
+}
+
+/** Dùng từ Settings “Use in chat”. */
+export function useSkillInChat(tag) {
+  addComposerSkill(tag);
+  const ta = $("chat-input");
+  ta?.focus();
 }
 
 function removeComposerSkill(tag) {
@@ -495,13 +536,16 @@ function renderMentionMenu() {
     return;
   }
   menu.innerHTML = _mention.items
-    .map(
-      (it, i) =>
+    .map((it, i) => {
+      const src = it.source ? `<span class="mention-src">${escapeHtml(it.source)}</span>` : "";
+      return (
         `<button type="button" class="chat-mention-item${i === _mention.index ? " is-active" : ""}" data-idx="${i}" role="option">` +
         `<span class="chat-skill-pill menu"><span class="chat-skill-at">@</span>${escapeHtml(it.tag)}</span>` +
+        `${src}` +
         `<span class="mention-desc">${escapeHtml(it.desc)}</span>` +
         `</button>`
-    )
+      );
+    })
     .join("");
   menu.classList.remove("hidden");
   menu.querySelectorAll(".chat-mention-item").forEach((btn) => {
@@ -527,9 +571,9 @@ function updateMentionSuggest(ta) {
     hideMentionMenu();
     return;
   }
-  const items = PIPELINE_MENTIONS.filter(
+  const items = _mentionCatalog.filter(
     (it) => !hit.query || it.tag.startsWith(hit.query) || it.tag.includes(hit.query)
-  );
+  ).slice(0, 14);
   if (!items.length) {
     hideMentionMenu();
     return;

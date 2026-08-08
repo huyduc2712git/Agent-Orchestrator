@@ -5,7 +5,7 @@ import { loadBoard, loadProjects, blockTask, selectProject } from "./api.js";
 import { renderBoard } from "./components/board.js";
 import { renderSidebar, switchView, goChat, notifyTab } from "./components/sidebar.js";
 import { openModal, openNewProject, setProjectCreateMode, renderEvent, shouldShowEvent } from "./components/modal.js";
-import { loadChat, sendChatMessage, resizeChatInput, resetChatInputHeight, appendChatMessage, renderChatMessage, setThinking, initChatImageAttach, handleChatMentionKeydown } from "./components/chat.js";
+import { loadChat, sendChatMessage, resizeChatInput, resetChatInputHeight, appendChatMessage, renderChatMessage, setThinking, initChatImageAttach, handleChatMentionKeydown, loadSkillMentions } from "./components/chat.js";
 import { initSettingsEvents, openSettingsModal } from "./components/settings.js";
 
 // Make key functions available globally for inline HTML events
@@ -245,6 +245,7 @@ function boot() {
     // Projects độc lập với board — tránh sidebar trống khi /api/board chậm/treo
     loadProjects();
     loadChat();
+    loadSkillMentions();
     loadBoard();
     connectWS();
     startDurationTicker();

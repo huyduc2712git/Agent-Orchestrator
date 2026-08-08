@@ -25,13 +25,23 @@ function tokenMetaHtml(t) {
 /** Skill pipeline (skip-security…) — hiện dưới hàng PR nếu có. */
 function skillMetaHtml(t) {
   const tags = (t.tags || []).map((x) => String(x).toLowerCase());
+  const pipeline = [];
   if (tags.includes("skip-security") || tags.includes("scope-ui")) {
-    return `<div class="meta-row"><span class="mk">Skill</span><span class="mv pass" title="Bỏ Akai Security + Amuro Pentest sau QA">skip-security</span></div>`;
+    pipeline.push(`<span class="mv pass" title="Bỏ Akai Security + Amuro Pentest sau QA">skip-security</span>`);
   }
   if (tags.includes("force-security")) {
-    return `<div class="meta-row"><span class="mk">Skill</span><span class="mv warn" title="Bắt buộc Security + Pentest">force-security</span></div>`;
+    pipeline.push(`<span class="mv warn" title="Bắt buộc Security + Pentest">force-security</span>`);
   }
-  return "";
+  const skip = new Set([
+    "skip-security", "scope-ui", "force-security", "deploy-prod", "db-migration",
+    "security", "no-app-chat",
+  ]);
+  const workflow = tags.filter((x) => !skip.has(x)).slice(0, 4);
+  const wfHtml = workflow
+    .map((x) => `<span class="mv dim" title="Workflow skill">@${escapeHtml(x)}</span>`)
+    .join(" ");
+  if (!pipeline.length && !wfHtml) return "";
+  return `<div class="meta-row"><span class="mk">Skill</span>${pipeline.join(" ")}${wfHtml ? " " + wfHtml : ""}</div>`;
 }
 
 export function metaRows(t, meta, isLatestDone = false) {

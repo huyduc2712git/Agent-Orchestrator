@@ -402,6 +402,13 @@
           >
             📁 Projects
           </button>
+          <button
+            type="button"
+            class="settings-tab-btn"
+            data-tab="tab-skills"
+          >
+            ✦ Skills
+          </button>
         </div>
 
         <!-- TAB 1: LLM & ROLES -->
@@ -605,6 +612,19 @@
               id="focus-project-mcp-status"
               style="margin-top: 10px"
             ></p>
+          </div>
+        </div>
+
+        <!-- TAB 4: SKILLS -->
+        <div class="settings-tab-content hidden" id="tab-skills">
+          <div class="panel-section">
+            <div class="panel-title">Built-in &amp; vendor skills</div>
+            <p class="settings-hint">
+              Playbook kiểu Reasonix/Addy — system chỉ giữ index; body load qua
+              <code>run_skill</code> hoặc gắn <code>@skill</code> trong chat.
+              Prompt cố định + tool list theo agent; model kế thừa role.
+            </p>
+            <div id="skills-catalog" class="skills-catalog"></div>
           </div>
         </div>
       </div>

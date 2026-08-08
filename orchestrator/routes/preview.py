@@ -296,6 +296,13 @@ async def _resolve_project_api_base(slug: str) -> str | None:
     return None
 
 
+# Prefix thuộc Orchestrator — không proxy sang project api_base
+_ORCH_API_PREFIXES = (
+    "skills", "board", "chat", "settings", "projects", "tasks",
+    "git", "mcp", "agents", "uploads",
+)
+
+
 @router.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"])
 async def proxy_project_api(path: str, request: Request):
     # FIX bug-8991: reject null byte in URL path BEFORE building the upstream
@@ -304,6 +311,12 @@ async def proxy_project_api(path: str, request: Request):
     # except below and uvicorn replied 500.
     if "\x00" in path:
         return JSONResponse({"error": "bad request: null byte in path"}, status_code=400)
+    head = (path or "").split("/", 1)[0].lower()
+    if head in _ORCH_API_PREFIXES:
+        return JSONResponse(
+            {"error": f"/api/{path} là API Orchestrator — không proxy"},
+            status_code=404,
+        )
     slug = _project_from_referer(request.headers.get("referer", ""))
     if not slug:
         # Agent http_get thường không gửi Referer — dùng Active Project.

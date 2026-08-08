@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from . import bus, config, settings
 from .core.patrol import patrol_loop
 from .core.scheduler import scheduler_loop
-from .routes import board, chat, git_routes, preview, projects, settings as settings_routes, mcp as mcp_routes
+from .routes import board, chat, git_routes, preview, projects, settings as settings_routes, mcp as mcp_routes, skills as skills_routes
 
 logging.basicConfig(
     level=logging.INFO,
@@ -135,25 +135,14 @@ app.include_router(board.router)
 app.include_router(projects.router)
 app.include_router(settings_routes.router)
 app.include_router(git_routes.router)
-app.include_router(preview.router)
+app.include_router(skills_routes.router)  # trước preview proxy /api/*
 app.include_router(mcp_routes.router)
+app.include_router(preview.router)
 
 
 # ---------- QA Artifacts ----------
 
-@app.get("/artifacts/{task_id}/{filename}")
-async def get_artifact(task_id: str, filename: str):
-    if ".." in filename or "/" in filename or "\\" in filename:
-        return JSONResponse({"error": "path không hợp lệ"}, status_code=400)
-    path = (config.ARTIFACTS_DIR / task_id / filename).resolve()
-    if not str(path).startswith(str(config.ARTIFACTS_DIR.resolve())):
-        return JSONResponse({"error": "path không hợp lệ"}, status_code=400)
-    if not path.is_file():
-        return JSONResponse({"error": "file không tồn tại"}, status_code=404)
-    return FileResponse(path)
-
-
-# SVG placeholder khi upload đã bị xóa / không còn trên disk
+# SVG placeholder khi upload/artifact đã bị xóa / không còn trên disk
 _MISSING_UPLOAD_SVG = (
     '<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">'
     '<rect width="128" height="128" rx="12" fill="#1e293b"/>'
@@ -165,6 +154,40 @@ _MISSING_UPLOAD_SVG = (
     'font-family="system-ui,sans-serif" font-size="11">ảnh đã xóa</text>'
     "</svg>"
 )
+
+
+@app.get("/artifacts/{task_id}/{filename}")
+async def get_artifact(task_id: str, filename: str):
+    from fastapi.responses import Response
+
+    if (
+        ".." in task_id
+        or "/" in task_id
+        or "\\" in task_id
+        or ".." in filename
+        or "/" in filename
+        or "\\" in filename
+    ):
+        return Response(
+            content=_MISSING_UPLOAD_SVG.encode("utf-8"),
+            media_type="image/svg+xml",
+            headers={"Cache-Control": "no-cache", "X-Artifact-Missing": "1"},
+        )
+    path = (config.ARTIFACTS_DIR / task_id / filename).resolve()
+    if not str(path).startswith(str(config.ARTIFACTS_DIR.resolve())):
+        return Response(
+            content=_MISSING_UPLOAD_SVG.encode("utf-8"),
+            media_type="image/svg+xml",
+            headers={"Cache-Control": "no-cache", "X-Artifact-Missing": "1"},
+        )
+    if not path.is_file():
+        # File đã dọn sau done (cũ) hoặc chưa chụp — tránh 404 vỡ <img> trên board
+        return Response(
+            content=_MISSING_UPLOAD_SVG.encode("utf-8"),
+            media_type="image/svg+xml",
+            headers={"Cache-Control": "no-cache", "X-Artifact-Missing": "1"},
+        )
+    return FileResponse(path)
 
 
 @app.get("/uploads/{filename}")

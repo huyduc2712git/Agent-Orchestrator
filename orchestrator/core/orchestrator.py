@@ -27,10 +27,8 @@ log = logging.getLogger("orchestrator")
 # Tránh scheduler + reload + Chạy lại gọi _closure song song → Conan Final Review lặp
 _closure_locks: dict[str, asyncio.Lock] = {}
 
-PLANNING_PROMPT = """Bạn là Conan — chat orchestrator của một hệ thống multi-agent. Bạn KHÔNG tự code.
-Bạn PHẢI phân tích trước (ảnh mockup, git, project hiện có), chọn stack/workflow hợp lý, rồi mới chia subtask build.
-
-Đội hình agent chuyên môn:
+# User-turn context only — system prompts sống trong orchestrator/skills/agents/
+PLANNING_USER = """Đội hình agent chuyên môn:
 {roster}
 
 MEMORY (bài học/quyết định cũ):
@@ -50,82 +48,15 @@ Lịch sử chat gần đây:
 
 Người dùng vừa nhắn: "{message}"
 
-Phân tích và trả về DUY NHẤT một JSON object (không giải thích thêm), theo một trong hai dạng:
-
-1) Nếu tin nhắn là câu hỏi/trao đổi/hỏi tiến độ — KHÔNG cần tạo task mới:
-{{"action": "reply", "message": "<trả lời tiếng Việt, dựa trên board/memory/wiki/project_context ở trên>"}}
-
-2) Nếu tin nhắn là yêu cầu công việc cần thực thi:
-{{"action": "plan",
-  "reply": "<xác nhận: đã thấy gì (ảnh/git/project), project có app chưa, chọn stack gì + vì sao, sẽ chia việc thế nào>",
-  "task": {{
-    "title": "<tên task cha>",
-    "description": "<mô tả đầy đủ; dùng \\n giữa các mục Stack / Ràng buộc / Verify — không viết một khối liền>",
-    "project": "<slug — BỎ QUA nếu có Active Project ở dưới, hệ thống sẽ gán>",
-    "project_dir": "<path tuyệt đối nếu người dùng chỉ định, nếu không thì để chuỗi rỗng>"
-  }},
-  "subtasks": [
-    {{"title": "...", "description": "<xuống dòng rõ: việc cần làm\\nStack: …\\nNguồn ảnh/ràng buộc: …\\nVerify: … — agent không được hỏi lại>",
-      "agent": "<kid|agasa>", "depends_on": [<index các subtask phải xong trước, tính từ 0>],
-      "tags": []}}
-  ]
-}}
-— description (task + subtask): BẮT BUỘC có xuống dòng (\\n) giữa các mục; CẤM một đoạn liền mặt dài.
-— Không quyết định bỏ Security/Pentest. Mặc định đủ luồng; chỉ khi user tự gắn `@skip-security` trong tin nhắn mới bỏ Akai/Amuro.
-
 Active Project (nếu có): {active_project}
-— Nếu Active Project khác rỗng: LUÔN dùng đúng slug đó, KHÔNG tạo project mới. Task mới nằm trong project đang chọn.
-— Chỉ đề xuất project mới khi Active Project rỗng VÀ người dùng yêu cầu tạo project mới rõ ràng.
-— project_dir: nếu user ghi đường dẫn tuyệt đối (vd D:\\Dev\\voxbeat, /home/me/apps/foo) → BẮT BUỘC điền đúng vào task.project_dir.
-  Không được để trống nếu user đã chỉ định. Không đề xuất clone vào thư mục trong cây AI Orchestrator.
-  CẤM điền path file ảnh/upload (*.png, assets/user-uploads/…) — chỉ thư mục gốc project.
-
 Link context (parser-registry đã quét tin nhắn):
 {link_hints}
 Projects root mặc định (ngoài Orchestrator): {projects_root}
 
-## Bước phân tích BẮT BUỘC trước khi chia task (trong đầu bạn, rồi ghi vào reply + description)
-
-A) Nguồn đầu vào:
-- Có ảnh/mockup/[Mô tả từ ảnh…] → đây là thiết kế UI cần xây hoặc đối chiếu.
-- Nếu có dòng `[Ảnh đã lưu tại: …]` → BẮT BUỘC dùng đúng file đó (copy vào public/src), KHÔNG tự vẽ/SVG lại logo khi user gửi ảnh.
-- Có GitHub/GitLab → ưu tiên clone/mở repo đó, đọc stack từ repo (không đoán bừa).
-- Có Figma → build theo spec Figma (Kid dùng figma_get).
-
-B) Project hiện có (đọc project_context):
-- EMPTY / chỉ stub (vd chỉ package-lock.json, không index.html/src) → GREENFIELD: phải scaffold app mới.
-- Đã có app (package.json + src/index.html/…) → EXTEND: sửa/thêm trên stack hiện có, KHÔNG scaffold lại trừ khi user yêu cầu làm lại từ đầu.
-- Ghi rõ trong reply: "Project đang trống → scaffold …" hoặc "Project đã có Vite/React → chỉnh trên codebase hiện có".
-
-C) Chọn stack / workflow (khi GREENFIELD hoặc user chưa chỉ định):
-- Web dashboard / admin / phòng điều khiển / desktop-web UI → mặc định **Vite + React + TypeScript** (Kid), CSS modules hoặc plain CSS theo mockup.
-- Landing / trang marketing đơn giản → Vite + HTML/CSS hoặc Vite + React nhẹ.
-- Mobile app (nhìn rõ native mobile, tab bar iOS/Android) → **React Native / Expo** — nêu rõ trong reply; nếu không chắc là mobile thì hỏi ngắn HOẶC chọn web Vite+React và ghi giả định.
-- Cần API/backend trong ảnh hoặc yêu cầu → thêm subtask **Agasa** (Node/Express hoặc FastAPI — chọn 1, ghi rõ), Kid chỉ UI + gọi API.
-- ĐÃ CÓ stack trong project_context → BẮT BUỘC theo stack đó (đọc package.json scripts/deps).
-- Trong **reply** phải nêu: stack đã chọn + lý do ngắn (1 câu). Trong **mọi subtask.description** nhắc lại lệnh scaffold/build (vd `npm create vite@latest . -- --template react-ts`).
-
-D) Thứ tự subtask (dependency đúng — KHÔNG nhảy QA):
-1. (Nếu greenfield) Scaffold project đúng stack + cấu trúc thư mục + chạy được dev/preview.
-2. Build UI theo mockup/ảnh (layout, màu, component chính).
-3. Tích hợp tương tác / API / state nếu cần.
-4. Smoke: build hoặc dev server + Live URL = 200.
-- CẤM subtask "phân tích thôi rồi xong" mà không tạo file. Phân tích gộp vào description của scaffold/build.
-- CẤM tạo subtask QA/Heiji/Haibara/Akai/Amuro — QA & security là quy trình tự động sau khi build xong.
-
-## Quy tắc khác
-- Task nhỏ 1 bước -> 1 subtask. Task phức tạp -> chain có depends_on.
-- CLONE GIT: không clone vào cây Orchestrator. Dùng path user / Projects root. Reply nêu path clone.
-- CLONE / chạy app: một tiến trình — clone → install → build/dev → start API nếu có → smoke Live URL + API.
-- Mô tả subtask phải đủ để Kid/Agasa làm không hỏi lại (kèm stack, path, acceptance: file nào, URL nào = 200).
-- Tag: "db-migration" / "security" / "deploy-prod" khi liên quan → operator review.
-- Trả lời ngay trong "reply" — có stack + tình trạng project.
-
-ĐỊNH DẠNG OUTPUT (bắt buộc): ký tự đầu tiên là "{{", ký tự cuối cùng là "}}".
-KHÔNG bọc trong mảng [...], KHÔNG code fence ```, KHÔNG text trước/sau JSON.
+Trả về đúng JSON theo system prompt (action reply hoặc plan).
 """
 
-CLOSURE_VERIFY_PROMPT = """Task cha: {task_id} — {title}
+CLOSURE_USER = """Task cha: {task_id} — {title}
 {description}
 
 Các subtask và deliverable:
@@ -136,38 +67,27 @@ QA verdict của Heiji:
 
 Live URL của project (orchestrator serve tĩnh): {preview_url}
 
-Nhiệm vụ của bạn (Conan, final review — Phase 5): VERIFY ĐỘC LẬP, không tin lời khai suông.
-Dùng tool kiểm tra thực tế: list_dir/read_file xem file có tồn tại và đúng nội dung không,
-http_get Live URL ở trên (phải trả status=200 nếu là sản phẩm web).
-LƯU Ý ĐẶC BIỆT:
-- package.json thiếu node_modules, hoặc React/Vite chưa build → màn trắng → REJECT.
-- Nếu repo có backend/API (server.ts, express, scripts start/dev server, thư mục api/server): 
-  CHỈ http_get preview UI = 200 LÀ KHÔNG ĐỦ. Phải http_get health/API trực tiếp (port phổ biến :3000/:8000)
-  VÀ http_get cùng path trên host Live URL (same-origin — FE fetch('/api/...')).
-  Direct OK mà Live host /api 404 → REJECT (thiếu proxy/api_base).
-  UI ổn mà API không chạy / lỗi → VERDICT: REJECTED.
-
-BẮT BUỘC post_message ĐÚNG một báo cáo với dòng tiêu đề (không đổi format):
-## Final Review — Conan (Phase 5) — {task_id} {title}
-
-Trong body: evidence chain (build -> QA -> verify), ghi rõ "Live URL verified",
-"API direct verified", "API same-origin verified", và một dòng
-"VERDICT: APPROVED" hoặc "VERDICT: REJECTED".
-KHÔNG post thêm bản "Final Review" ngắn khác — chỉ đúng tiêu đề Phase 5 ở trên.
-Nếu REJECTED: liệt kê từng lỗi (bullet). BẠN KHÔNG tạo bug ticket —
-hệ thống sẽ trả Heiji QA → Kid fix → QA lại.
+Thực hiện Final Review theo system prompt; post_message đúng tiêu đề Phase 5.
 """
 
-MEMORY_PROMPT = """Task vừa hoàn thành:
+MEMORY_USER = """Task vừa hoàn thành:
 - Tiêu đề: {title}
 - Mô tả: {description}
 - Kết quả: {summary}
-
-Hãy trả về DUY NHẤT một JSON object:
-{{"memory_entry": "<1-2 câu tiếng Việt: quyết định/pattern/bài học đáng nhớ cho task sau>",
-  "feature_slug": "<slug ngắn cho wiki, hoặc chuỗi rỗng nếu không đáng ghi wiki>",
-  "feature_doc": "<nội dung markdown mô tả feature: nó là gì, file ở đâu, chạy thế nào — hoặc chuỗi rỗng>"}}
 """
+
+
+def _skill_system(name: str, *, fallback: str = "") -> str:
+    """Load agent/prompt skill body as system message."""
+    try:
+        from ..skills.loader import get_skill
+
+        sk = get_skill(name)
+        if sk and sk.body.strip():
+            return sk.body.strip()
+    except Exception:
+        pass
+    return fallback
 
 
 def _board_snapshot() -> str:
@@ -230,7 +150,7 @@ def _filter_build_only_subtasks(subtasks_info: list) -> list:
 
 
 def _inspect_project_for_planning(slug: str) -> str:
-    """Snapshot đĩa: project có app chưa, stack gì — đưa vào PLANNING_PROMPT."""
+    """Snapshot đĩa: project có app chưa, stack gì — đưa vào PLANNING_USER."""
     slug = (slug or "").strip()
     if not slug:
         return (
@@ -511,24 +431,33 @@ _USER_PIPELINE_TAGS = frozenset({
 
 
 def extract_user_pipeline_tags(message: str, explicit: list[str] | None = None) -> list[str]:
-    """Gộp tag từ API + @tag/#tag trong message. Chỉ nhận whitelist pipeline.
+    """Gộp tag từ API + @tag/#tag trong message: pipeline whitelist + skill catalog.
 
-    Ví dụ: "thay logo icon của web @skip-security"
+    Ví dụ: "thay logo @skip-security @replace-brand-assets"
     """
+    from ..skills.loader import resolve_skill_name
+
     found: list[str] = []
-    for t in explicit or []:
-        key = str(t).strip().lower().lstrip("#@")
-        if key in _USER_PIPELINE_TAGS and key not in found:
+
+    def _accept(key: str) -> None:
+        key = (key or "").strip().lower().lstrip("#@")
+        if not key or key in found:
+            return
+        if key in _USER_PIPELINE_TAGS:
             found.append(key)
-    # @skip-security / #skip-security — cho phép sát chữ hoặc sau khoảng trắng/dấu câu
+            return
+        sk = resolve_skill_name(key)
+        if sk and sk not in found:
+            found.append(sk)
+
+    for t in explicit or []:
+        _accept(str(t))
     for m in re.finditer(
         r"(?:^|[\s,;(\[{'\"])[@#]([a-z0-9][a-z0-9_-]{1,40})",
         message or "",
         flags=re.I,
     ):
-        key = m.group(1).lower()
-        if key in _USER_PIPELINE_TAGS and key not in found:
-            found.append(key)
+        _accept(m.group(1))
     return found
 
 
@@ -968,7 +897,11 @@ async def handle_chat(
             return
 
     project_context = _inspect_project_for_planning(active)
-    prompt = PLANNING_PROMPT.format(
+    plan_system = _skill_system(
+        "conan-plan",
+        fallback="Bạn là Conan — planner. Trả JSON action reply|plan. Không code.",
+    )
+    plan_user = PLANNING_USER.format(
         roster=roster_description(),
         memory=memory.read_memory()[-4000:],
         wiki=memory.read_wiki_summary(3000),
@@ -984,7 +917,10 @@ async def handle_chat(
     planner = app_settings.resolve_llm(role="planner")
     try:
         decision = await llm.chat_json(
-            [{"role": "user", "content": prompt}],
+            [
+                {"role": "system", "content": plan_system},
+                {"role": "user", "content": plan_user},
+            ],
             model=planner["model"],
             base_url=planner["base_url"],
             api_key=planner["api_key"],
@@ -1127,13 +1063,35 @@ async def handle_chat(
         tinfo["description"] = (tinfo.get("description") or "") + git_note
     elif msg_explicit or not is_under_orchestrator(project_dir):
         store.add_chat("conan", f"Project dir: `{project_dir}` ({dir_reason}).")
-    # Gắn steer từ từng link đã detect vào subtask
+    # Gắn steer từ từng link đã detect vào subtask + resolve/auto skill tags
+    from ..skills.loader import match_skills_for_task, resolve_skill_name
+
     for st in subtasks_info:
         agent = st.get("agent", "")
         tags = list(st.get("tags") or [])
         for t in extra_tags:
             if t not in tags:
                 tags.append(t)
+        # Chuẩn hóa tag skill từ planner
+        normalized: list[str] = []
+        for t in tags:
+            key = str(t).strip().lower().lstrip("@#")
+            sk = resolve_skill_name(key)
+            if sk:
+                if sk not in normalized:
+                    normalized.append(sk)
+            elif key in _USER_PIPELINE_TAGS or key:
+                if key not in normalized:
+                    normalized.append(key)
+        for sk in match_skills_for_task(
+            title=st.get("title", ""),
+            description=st.get("description", ""),
+            tags=normalized,
+            assignee=agent or "kid",
+            max_skills=2,
+        ):
+            if sk.name not in normalized:
+                normalized.append(sk.name)
         steers = []
         for link in detected_links:
             if agent == "heiji" and link.get("steer_qa"):
@@ -1142,7 +1100,7 @@ async def handle_chat(
                 steers.append(link["steer_build"])
         if steers:
             st["description"] = (st.get("description") or "") + "\n\n" + "\n".join(steers)
-        st["tags"] = tags
+        st["tags"] = normalized
 
     # Ép chain tuần tự cho mọi build sub (kid/agasa) — bỏ parallel do planner.
     # Sub #n chỉ chạy khi #n-1 đã testing/done; QA chỉ sau khi hết build.
@@ -1184,12 +1142,12 @@ async def handle_chat(
     store.add_event(
         parent.id, "conan", "comment",
         "Kế hoạch (tuần tự): " + "; ".join(
-            f"Subtask #{i+1} ({s.id})→{s.assignee}" for i, s in enumerate(created)
+            f"Subtask ({s.id}) → {s.assignee}" for i, s in enumerate(created)
         ) + f". Chạy {seq}; QA chỉ sau khi hết build.",
     )
 
     plan_lines = "\n".join(
-        f"- Subtask #{i+1} ({s.id}) → {AGENTS[s.assignee].display}: {s.title}"
+        f"- Subtask ({s.id}) → {AGENTS[s.assignee].display}: {s.title}"
         + (f" (sau #{i})" if i else " (đầu tiên)")
         for i, s in enumerate(created)
     )
@@ -2259,11 +2217,15 @@ async def _closure_unlocked(parent: Task, subtasks: list[Task]) -> None:
 
     conan = AGENTS["conan"]
     preview_url = f"{config.BASE_URL}/preview/{parent.project}/"
+    closure_system = _skill_system(
+        "conan-final-review",
+        fallback=conan.system_prompt(),
+    )
     try:
         result = await run_agent(
             "conan",
-            conan.system_prompt(),
-            CLOSURE_VERIFY_PROMPT.format(
+            closure_system,
+            CLOSURE_USER.format(
                 task_id=parent.id,
                 title=parent.title,
                 description=parent.description[:1500],
@@ -2436,14 +2398,21 @@ async def _phase6_memorize(parent: Task, summary: str) -> None:
     """Phase 6: cập nhật MEMORY.md + wiki features."""
     try:
         summary_llm = app_settings.resolve_llm(role="summary")
-        raw = await llm.chat_text([{
-            "role": "user",
-            "content": MEMORY_PROMPT.format(
-                title=parent.title,
-                description=parent.description[:800],
-                summary=summary[:1200],
-            ),
-        }], model=summary_llm["model"], base_url=summary_llm["base_url"], api_key=summary_llm["api_key"],
+        mem_system = _skill_system(
+            "memory-summarize",
+            fallback='Trả JSON: {"memory_entry":"...","feature_slug":"","feature_doc":""}',
+        )
+        raw = await llm.chat_text([
+            {"role": "system", "content": mem_system},
+            {
+                "role": "user",
+                "content": MEMORY_USER.format(
+                    title=parent.title,
+                    description=parent.description[:800],
+                    summary=summary[:1200],
+                ),
+            },
+        ], model=summary_llm["model"], base_url=summary_llm["base_url"], api_key=summary_llm["api_key"],
             task_id=parent.id)
         data = llm.extract_json(raw)
         if data.get("memory_entry"):

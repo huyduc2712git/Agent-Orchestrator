@@ -20,8 +20,9 @@ workspace/wiki/
 workspace/orch-*.log
 workspace/*.log
 
-# Ignore markdown files except MEMORY.md, README.md, docs
+# Ignore markdown files except MEMORY.md, README.md, docs, and skills
 *.md
 !README.md
 !docs/**/*.md
 !workspace/memory/MEMORY.md
+!orchestrator/skills/**/*.md

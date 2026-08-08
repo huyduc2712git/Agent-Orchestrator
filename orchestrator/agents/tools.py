@@ -1,4 +1,8 @@
-"""Bộ tool thực thi thật cho agent: file, command, search, http, figma, board."""
+"""Bộ tool thực thi thật cho agent: file, command, search, http, figma, board.
+
+Tool surface lấy cảm hứng / tương thích [DeepSeek-Reasonix](https://github.com/esengine/DeepSeek-Reasonix)
+(glob, grep, edit_file, multi_edit, move_file, web_fetch, todo_write; alias bash/ls).
+"""
 import logging
 import os
 import re
@@ -15,6 +19,12 @@ from ..qa import browser as qa_browser
 
 log = logging.getLogger("tools")
 
+# Reasonix name → handler nội bộ (args được normalize)
+_TOOL_ALIASES = {
+    "bash": "run_command",
+    "ls": "list_dir",
+}
+
 # ---------- OpenAI tool schemas ----------
 
 TOOL_SCHEMAS: dict[str, dict] = {
@@ -22,10 +32,17 @@ TOOL_SCHEMAS: dict[str, dict] = {
         "type": "function",
         "function": {
             "name": "read_file",
-            "description": "Đọc nội dung một file trong project directory. Path tương đối so với project dir.",
+            "description": (
+                "Đọc file text trong project (Reasonix-style). Path tương đối. "
+                "Optional offset/limit (1-based line) để đọc từng trang; mỗi dòng có số dòng."
+            ),
             "parameters": {
                 "type": "object",
-                "properties": {"path": {"type": "string"}},
+                "properties": {
+                    "path": {"type": "string"},
+                    "offset": {"type": "integer", "description": "Dòng bắt đầu 1-based (optional)"},
+                    "limit": {"type": "integer", "description": "Số dòng tối đa (optional)"},
+                },
                 "required": ["path"],
             },
         },
@@ -49,10 +66,65 @@ TOOL_SCHEMAS: dict[str, dict] = {
         "type": "function",
         "function": {
             "name": "list_dir",
-            "description": "Liệt kê file/thư mục trong project directory.",
+            "description": "Liệt kê file/thư mục (alias Reasonix: ls). recursive=true → depth-first, bỏ .git/node_modules.",
             "parameters": {
                 "type": "object",
-                "properties": {"path": {"type": "string", "description": "Mặc định là gốc project"}},
+                "properties": {
+                    "path": {"type": "string", "description": "Mặc định gốc project"},
+                    "recursive": {"type": "boolean", "description": "Mặc định false"},
+                },
+            },
+        },
+    },
+    "ls": {
+        "type": "function",
+        "function": {
+            "name": "ls",
+            "description": "Alias Reasonix của list_dir — liệt kê thư mục.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "recursive": {"type": "boolean"},
+                },
+            },
+        },
+    },
+    "glob": {
+        "type": "function",
+        "function": {
+            "name": "glob",
+            "description": (
+                "Reasonix glob: tìm file theo pattern (vd **/*.tsx, src/**/*.css). "
+                "Bỏ qua node_modules/.git/dist."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string", "description": "Glob pattern"},
+                    "path": {"type": "string", "description": "Thư mục gốc tương đối (mặc định .)"},
+                },
+                "required": ["pattern"],
+            },
+        },
+    },
+    "grep": {
+        "type": "function",
+        "function": {
+            "name": "grep",
+            "description": (
+                "Reasonix grep: tìm regex trong file/thư mục. Trả path:line:text, tối đa 200 hits. "
+                "Ưu tiên hơn shell grep."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string", "description": "Regular expression"},
+                    "path": {"type": "string", "description": "File hoặc thư mục (mặc định .)"},
+                    "glob": {"type": "string", "description": "Lọc file vd *.ts"},
+                    "case_insensitive": {"type": "boolean"},
+                },
+                "required": ["pattern"],
             },
         },
     },
@@ -60,7 +132,7 @@ TOOL_SCHEMAS: dict[str, dict] = {
         "type": "function",
         "function": {
             "name": "search_files",
-            "description": "Tìm chuỗi văn bản trong các file của project (case-insensitive). Trả về file:line:content.",
+            "description": "Tìm chuỗi văn bản (substring, case-insensitive). Regex dùng tool grep.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -71,16 +143,90 @@ TOOL_SCHEMAS: dict[str, dict] = {
             },
         },
     },
+    "edit_file": {
+        "type": "function",
+        "function": {
+            "name": "edit_file",
+            "description": (
+                "Reasonix edit_file: thay đúng một lần old_string → new_string trong file. "
+                "old_string phải xuất hiện đúng 1 lần (thêm context nếu trùng)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "old_string": {"type": "string"},
+                    "new_string": {"type": "string"},
+                },
+                "required": ["path", "old_string", "new_string"],
+            },
+        },
+    },
+    "multi_edit": {
+        "type": "function",
+        "function": {
+            "name": "multi_edit",
+            "description": (
+                "Reasonix multi_edit: áp dụng tuần tự nhiều edit trên một file trong bộ nhớ; "
+                "chỉ ghi đĩa nếu tất cả thành công."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "edits": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "old_string": {"type": "string"},
+                                "new_string": {"type": "string"},
+                            },
+                            "required": ["old_string", "new_string"],
+                        },
+                    },
+                },
+                "required": ["path", "edits"],
+            },
+        },
+    },
+    "move_file": {
+        "type": "function",
+        "function": {
+            "name": "move_file",
+            "description": "Reasonix move_file: đổi tên/di chuyển file trong project (không dùng shell mv).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "source_path": {"type": "string"},
+                    "destination_path": {"type": "string"},
+                },
+                "required": ["source_path", "destination_path"],
+            },
+        },
+    },
     "run_command": {
         "type": "function",
         "function": {
             "name": "run_command",
             "description": (
                 "Chạy một lệnh PowerShell trong project directory (timeout "
-                f"{config.COMMAND_TIMEOUT_SECONDS}s). Dùng cho build, test, git... "
+                f"{config.COMMAND_TIMEOUT_SECONDS}s). Alias Reasonix: bash. "
                 "KHÔNG chạy lệnh chờ vô hạn (dev server foreground) — nếu cần server, "
                 "chạy dạng Start-Process node ... -RedirectStandardOutput 'server.log' (KHÔNG dùng -NoNewWindow)."
             ),
+            "parameters": {
+                "type": "object",
+                "properties": {"command": {"type": "string"}},
+                "required": ["command"],
+            },
+        },
+    },
+    "bash": {
+        "type": "function",
+        "function": {
+            "name": "bash",
+            "description": "Alias Reasonix của run_command — chạy shell trong project dir.",
             "parameters": {
                 "type": "object",
                 "properties": {"command": {"type": "string"}},
@@ -92,11 +238,60 @@ TOOL_SCHEMAS: dict[str, dict] = {
         "type": "function",
         "function": {
             "name": "http_get",
-            "description": "HTTP GET một URL (để verify server/trang web). Trả về status code + phần đầu body.",
+            "description": "HTTP GET một URL (verify server/trang). Trả status + phần đầu body thô.",
             "parameters": {
                 "type": "object",
                 "properties": {"url": {"type": "string"}},
                 "required": ["url"],
+            },
+        },
+    },
+    "web_fetch": {
+        "type": "function",
+        "function": {
+            "name": "web_fetch",
+            "description": (
+                "Reasonix web_fetch: GET URL, HTML → text đọc được; JSON/text giữ nguyên. "
+                "Dùng đọc docs/API ngoài filesystem."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string"},
+                    "max_chars": {"type": "integer", "description": "Mặc định 8000"},
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    "todo_write": {
+        "type": "function",
+        "function": {
+            "name": "todo_write",
+            "description": (
+                "Reasonix todo_write: ghi/cập nhật task list có cấu trúc cho công việc hiện tại. "
+                "Gửi FULL list mỗi lần (thay thế list cũ). Giữ đúng 1 item in_progress."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "todos": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "string"},
+                                "content": {"type": "string"},
+                                "status": {
+                                    "type": "string",
+                                    "enum": ["pending", "in_progress", "completed", "cancelled"],
+                                },
+                            },
+                            "required": ["content", "status"],
+                        },
+                    },
+                },
+                "required": ["todos"],
             },
         },
     },
@@ -184,6 +379,27 @@ TOOL_SCHEMAS: dict[str, dict] = {
             "name": "git_status",
             "description": "Xem git status / remote / log gần đây trong project directory (repo đã clone).",
             "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    "run_skill": {
+        "type": "function",
+        "function": {
+            "name": "run_skill",
+            "description": (
+                "Load playbook body của một skill theo name (vd explore, vite-fe-smoke, "
+                "frontend-ui-engineering). Chỉ trả markdown checklist — không spawn subagent. "
+                "Giới hạn vài lần / task. Dùng khi skill index gợi ý playbook liên quan."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Bare skill id (không có @), vd replace-brand-assets",
+                    },
+                },
+                "required": ["name"],
+            },
         },
     },
     "post_message": {
@@ -336,7 +552,14 @@ TOOL_SCHEMAS: dict[str, dict] = {
 
 
 def schemas_for(tool_names: list[str]) -> list[dict]:
-    return [TOOL_SCHEMAS[n] for n in tool_names]
+    out = []
+    for n in tool_names:
+        sch = TOOL_SCHEMAS.get(n)
+        if sch:
+            out.append(sch)
+        else:
+            log.warning("schema thiếu cho tool %s", n)
+    return out
 
 
 # ---------- Executor ----------
@@ -346,6 +569,7 @@ class ToolContext:
 
     def __init__(self, agent: str, task: Task):
         self.agent = agent
+        self._todos: list[dict] = []
         self.task = task
         if task.project_dir:
             self.project_dir = Path(task.project_dir)
@@ -376,10 +600,22 @@ class ToolContext:
 
     def execute(self, name: str, args: dict) -> str:
         try:
-            handler = getattr(self, f"_tool_{name}", None)
+            canon = _TOOL_ALIASES.get(name, name)
+            # Normalize Reasonix bash args if needed
+            if name == "bash" and "command" not in args and "cmd" in args:
+                args = {**args, "command": args.get("cmd")}
+            handler = getattr(self, f"_tool_{canon}", None)
             if handler is None:
                 return f"ERROR: tool không tồn tại: {name}"
-            out = handler(**args)
+            # Drop unknown kwargs that models sometimes invent
+            import inspect
+            sig = inspect.signature(handler)
+            if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+                call_args = args
+            else:
+                allowed = set(sig.parameters)
+                call_args = {k: v for k, v in (args or {}).items() if k in allowed}
+            out = handler(**call_args)
             if len(out) > config.MAX_TOOL_OUTPUT_CHARS:
                 out = out[: config.MAX_TOOL_OUTPUT_CHARS] + "\n...[truncated]"
             return out
@@ -388,11 +624,32 @@ class ToolContext:
 
     # --- file tools ---
 
-    def _tool_read_file(self, path: str) -> str:
+    def _tool_read_file(self, path: str, offset: int | None = None, limit: int | None = None) -> str:
         p = self._resolve(path)
         if not p.is_file():
             return f"ERROR: file không tồn tại: {path}"
-        return p.read_text(encoding="utf-8", errors="replace")
+        text = p.read_text(encoding="utf-8", errors="replace")
+        lines = text.splitlines()
+        total = len(lines)
+        start = 1
+        if offset is not None:
+            start = max(1, int(offset))
+        end = total + 1
+        if limit is not None:
+            end = min(total + 1, start + max(0, int(limit)))
+        elif offset is not None:
+            end = total + 1
+        if offset is None and limit is None:
+            # Giữ behavior cũ cho file ngắn; file dài vẫn đánh số dòng
+            if total <= 400:
+                return text
+            start, end = 1, 400
+        chunk = lines[start - 1 : end - 1]
+        numbered = "\n".join(f"{i}|{line}" for i, line in enumerate(chunk, start))
+        trailer = f"\n\n[lines {start}-{start + len(chunk) - 1} of {total}]"
+        if end <= total:
+            trailer += f" — còn {total - end + 1} dòng; tăng offset để đọc tiếp"
+        return numbered + trailer
 
     def _tool_write_file(self, path: str, content: str) -> str:
         p = self._resolve(path)
@@ -400,14 +657,45 @@ class ToolContext:
         p.write_text(content, encoding="utf-8")
         return f"OK: đã ghi {len(content)} ký tự vào {path}"
 
-    def _tool_list_dir(self, path: str = ".") -> str:
+    def _tool_list_dir(self, path: str = ".", recursive: bool = False) -> str:
         p = self._resolve(path)
         if not p.is_dir():
             return f"ERROR: thư mục không tồn tại: {path}"
         lines = []
-        for child in sorted(p.iterdir()):
-            kind = "dir " if child.is_dir() else "file"
-            lines.append(f"{kind}  {child.relative_to(self.project_dir)}")
+        if not recursive:
+            for child in sorted(p.iterdir()):
+                try:
+                    rel = child.relative_to(self.project_dir)
+                except ValueError:
+                    rel = child.name
+                if child.is_dir():
+                    lines.append(f"{rel.as_posix()}/")
+                else:
+                    try:
+                        sz = child.stat().st_size
+                    except OSError:
+                        sz = 0
+                    lines.append(f"{rel.as_posix()}  ({sz} B)")
+            return "\n".join(lines) or "(trống)"
+
+        # recursive depth-first
+        count = 0
+        for root, dirs, files in os.walk(p):
+            dirs[:] = [d for d in dirs if d not in self._SEARCH_SKIP_DIRS and not d.startswith(".")]
+            root_p = Path(root)
+            for name in sorted(files):
+                fp = root_p / name
+                try:
+                    rel = fp.relative_to(self.project_dir).as_posix()
+                except ValueError:
+                    continue
+                if any(part in self._SEARCH_SKIP_DIRS for part in Path(rel).parts):
+                    continue
+                lines.append(rel)
+                count += 1
+                if count >= 500:
+                    lines.append("...[max 500 entries — thu hẹp path]")
+                    return "\n".join(lines)
         return "\n".join(lines) or "(trống)"
 
     # Bỏ qua khi search — tránh treo hàng phút trong node_modules/dist
@@ -416,6 +704,181 @@ class ToolContext:
         "dist", "build", ".next", ".nuxt", "coverage", ".turbo", ".cache",
         "qa-shots", ".playwright",
     })
+
+    def _iter_project_files(self, root: Path, glob_pat: str = "**/*"):
+        if "**" not in glob_pat and not any(ch in glob_pat for ch in "*?["):
+            glob_pat = f"**/{glob_pat}"
+        elif "**" not in glob_pat and "/" not in glob_pat and "\\" not in glob_pat:
+            glob_pat = f"**/{glob_pat}"
+        for f in root.glob(glob_pat):
+            if not f.is_file():
+                continue
+            try:
+                rel_parts = f.relative_to(self.project_dir).parts
+            except ValueError:
+                continue
+            if any(p in self._SEARCH_SKIP_DIRS for p in rel_parts):
+                continue
+            yield f
+
+    def _tool_glob(self, pattern: str, path: str = ".") -> str:
+        root = self._resolve(path or ".")
+        if not root.exists():
+            return f"ERROR: path không tồn tại: {path}"
+        if root.is_file():
+            root = root.parent
+        pat = pattern or "**/*"
+        hits = []
+        for f in self._iter_project_files(root, pat):
+            try:
+                hits.append(f.relative_to(self.project_dir).as_posix())
+            except ValueError:
+                continue
+            if len(hits) >= 200:
+                hits.append("...[max 200]")
+                break
+        return "\n".join(hits) or "(không tìm thấy)"
+
+    def _tool_grep(
+        self,
+        pattern: str,
+        path: str = ".",
+        glob: str = "**/*",
+        case_insensitive: bool = False,
+    ) -> str:
+        root = self._resolve(path or ".")
+        flags = re.IGNORECASE if case_insensitive else 0
+        try:
+            rx = re.compile(pattern, flags)
+        except re.error as e:
+            return f"ERROR: regex không hợp lệ: {e}"
+        hits: list[str] = []
+        files = []
+        if root.is_file():
+            files = [root]
+        else:
+            files = list(self._iter_project_files(root, glob or "**/*"))
+        scanned = 0
+        for f in files:
+            scanned += 1
+            if scanned > 800:
+                hits.append("...[đã quét 800 file — thu hẹp path/glob]")
+                break
+            try:
+                if f.stat().st_size > 1_000_000:
+                    continue
+                text = f.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            try:
+                rel = f.relative_to(self.project_dir).as_posix()
+            except ValueError:
+                rel = str(f)
+            for i, line in enumerate(text.splitlines(), 1):
+                if rx.search(line):
+                    hits.append(f"{rel}:{i}: {line.strip()[:200]}")
+                    if len(hits) >= 200:
+                        return "\n".join(hits) + "\n...[max 200 hits]"
+        return "\n".join(hits) or "(không tìm thấy)"
+
+    def _tool_edit_file(self, path: str, old_string: str, new_string: str) -> str:
+        p = self._resolve(path)
+        if not p.is_file():
+            return f"ERROR: file không tồn tại: {path}"
+        text = p.read_text(encoding="utf-8", errors="replace")
+        count = text.count(old_string)
+        if count == 0:
+            return "ERROR: old_string không khớp — thêm context hoặc đọc lại file"
+        if count > 1:
+            return f"ERROR: old_string khớp {count} lần — cần unique (thêm dòng quanh)"
+        p.write_text(text.replace(old_string, new_string, 1), encoding="utf-8")
+        return f"OK: edit_file {path} (−{len(old_string)} +{len(new_string)} chars)"
+
+    def _tool_multi_edit(self, path: str, edits: list) -> str:
+        p = self._resolve(path)
+        if not p.is_file():
+            return f"ERROR: file không tồn tại: {path}"
+        if not edits:
+            return "ERROR: edits rỗng"
+        text = p.read_text(encoding="utf-8", errors="replace")
+        for i, ed in enumerate(edits):
+            old = ed.get("old_string", "")
+            new = ed.get("new_string", "")
+            n = text.count(old)
+            if n == 0:
+                return f"ERROR: multi_edit bước {i + 1}: old_string không khớp — file chưa ghi"
+            if n > 1:
+                return f"ERROR: multi_edit bước {i + 1}: old_string khớp {n} lần"
+            text = text.replace(old, new, 1)
+        p.write_text(text, encoding="utf-8")
+        return f"OK: multi_edit {path} — {len(edits)} edits"
+
+    def _tool_move_file(self, source_path: str, destination_path: str) -> str:
+        src = self._resolve(source_path)
+        dst = self._resolve(destination_path)
+        if not src.exists():
+            return f"ERROR: source không tồn tại: {source_path}"
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if dst.exists():
+            return f"ERROR: destination đã tồn tại: {destination_path}"
+        shutil.move(str(src), str(dst))
+        return f"OK: moved {source_path} → {destination_path}"
+
+    def _tool_web_fetch(self, url: str, max_chars: int = 8000) -> str:
+        try:
+            with httpx.Client(timeout=30.0, follow_redirects=True) as client:
+                resp = client.get(url)
+        except Exception as e:
+            return f"ERROR: web_fetch failed: {e}"
+        ctype = (resp.headers.get("content-type") or "").lower()
+        body = resp.text or ""
+        if "html" in ctype or body.lstrip()[:32].lower().startswith("<!DOCTYPE html") or "<html" in body[:500].lower():
+            # Strip scripts/styles then tags
+            cleaned = re.sub(r"(?is)<(script|style).*?>.*?</\1>", " ", body)
+            cleaned = re.sub(r"(?is)<br\s*/?>", "\n", cleaned)
+            cleaned = re.sub(r"(?is)</p>", "\n", cleaned)
+            cleaned = re.sub(r"(?is)<[^>]+>", " ", cleaned)
+            cleaned = re.sub(r"[ \t]+", " ", cleaned)
+            cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+            body = cleaned
+        limit = max(500, int(max_chars or 8000))
+        if len(body) > limit:
+            body = body[:limit] + "\n...[truncated]"
+        return f"status={resp.status_code} content-type={ctype}\n\n{body}"
+
+    def _tool_todo_write(self, todos: list) -> str:
+        if not isinstance(todos, list) or not todos:
+            return "ERROR: todos phải là mảng không rỗng"
+        normalized = []
+        in_prog = 0
+        for i, t in enumerate(todos):
+            if not isinstance(t, dict):
+                return f"ERROR: todos[{i}] không phải object"
+            st = str(t.get("status") or "pending").lower()
+            if st not in ("pending", "in_progress", "completed", "cancelled"):
+                return f"ERROR: status không hợp lệ: {st}"
+            if st == "in_progress":
+                in_prog += 1
+            normalized.append({
+                "id": str(t.get("id") or f"t{i + 1}"),
+                "content": str(t.get("content") or "").strip(),
+                "status": st,
+            })
+            if not normalized[-1]["content"]:
+                return f"ERROR: todos[{i}].content rỗng"
+        if in_prog > 1:
+            return "ERROR: chỉ được đúng 1 item in_progress"
+        self._todos = normalized
+        lines = ["# Agent todos", ""]
+        for t in normalized:
+            mark = {"pending": "○", "in_progress": "▶", "completed": "✓", "cancelled": "✕"}.get(t["status"], "?")
+            lines.append(f"{mark} [{t['status']}] {t['id']}: {t['content']}")
+        blob = "\n".join(lines)
+        try:
+            store.add_event(self.task.id, self.agent, "system", f"todo_write:\n{blob}")
+        except Exception:
+            pass
+        return blob
 
     def _tool_search_files(self, query: str, glob: str = "**/*") -> str:
         if "**" not in glob:
@@ -864,6 +1327,34 @@ class ToolContext:
         except Exception as e:
             return f"ERROR: {type(e).__name__}: {e}\nmcp_url: {url}"
 
+    def _tool_run_skill(self, name: str) -> str:
+        from ..skills.loader import get_skill, note_run_skill, resolve_skill_name, run_skill_allowed
+
+        key = resolve_skill_name(name or "")
+        if not key:
+            return f"ERROR: skill không tồn tại: {name!r}. Dùng đúng id trong Skills index."
+        if not run_skill_allowed(self.task.id):
+            return (
+                "ERROR: đã hết quota run_skill cho task này (tối đa 3). "
+                "Làm theo các Active Skills / body đã load."
+            )
+        sk = get_skill(key)
+        if not sk:
+            return f"ERROR: không đọc được skill {key}"
+        # Agent subagent profiles = system prompt, không phải playbook on-demand
+        if sk.source == "agent" and (
+            sk.invocation == "manual" or sk.run_as == "subagent"
+        ):
+            return (
+                f"ERROR: `{sk.name}` là agent profile (system prompt), không gọi qua run_skill. "
+                "Chọn playbook trong Skills index (native/reasonix/addy)."
+            )
+        n = note_run_skill(self.task.id)
+        return (
+            f"# Skill `{sk.name}` ({sk.source}) — load #{n}/3\n\n"
+            f"{sk.description}\n\n---\n\n{sk.body}"
+        )
+
     def _tool_post_message(self, message: str) -> str:
         store.add_event(self.task.id, self.agent, "comment", message)
         return "OK: đã đăng message vào task " + self.task.id
@@ -1307,15 +1798,21 @@ def _figma_walk(node: dict, depth: int, lines: list[str]) -> None:
         _figma_walk(child, depth + 1, lines)
 
 
+# Core coding surface ≈ Reasonix default (aliases bash/ls included for skill bodies)
 DEFAULT_WORKER_TOOLS = [
-    "read_file", "write_file", "list_dir", "search_files",
-    "run_command", "http_get", "figma_get", "mcp_list_tools", "mcp_call",
+    "read_file", "write_file", "edit_file", "multi_edit", "move_file",
+    "list_dir", "ls", "glob", "grep", "search_files",
+    "run_command", "bash", "http_get", "web_fetch",
+    "todo_write", "run_skill",
+    "figma_get", "mcp_list_tools", "mcp_call",
     "git_clone", "git_status",
     "post_message", "search_tasks", "create_bug_ticket", "save_start_command",
 ]
 QA_TOOLS = [
-    "read_file", "list_dir", "search_files", "run_command",
-    "http_get", "figma_get", "mcp_list_tools", "mcp_call", "git_clone", "git_status",
+    "read_file", "list_dir", "ls", "glob", "grep", "search_files",
+    "run_command", "bash", "http_get", "web_fetch",
+    "todo_write", "run_skill",
+    "figma_get", "mcp_list_tools", "mcp_call", "git_clone", "git_status",
     "screenshot_url", "inspect_render", "compare_image",
     "post_message", "search_tasks", "create_bug_ticket", "save_start_command",
 ]

@@ -249,8 +249,8 @@ def set_status(task_id: str, new_status: str, actor: str) -> TransitionResult:
             task_id, actor, "status",
             f"{task.status} → {result.final_status}",
         )
-        # Task đóng/archive → xóa artifacts tạm (screenshot QA, figma copy, …)
-        if result.final_status in ("done", "archived"):
+        # Archive → xóa artifacts. Done giữ screenshot để board vẫn xem được.
+        if result.final_status == "archived":
             try:
                 from ..workspace_cleanup import on_task_terminal
                 on_task_terminal(task_id, result.final_status)

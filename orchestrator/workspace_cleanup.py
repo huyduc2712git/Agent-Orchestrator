@@ -116,7 +116,10 @@ def cleanup_stale_workspace(max_age_hours: float = STALE_MAX_AGE_HOURS) -> dict[
 
 
 def cleanup_orphan_artifacts() -> int:
-    """Xóa artifacts của task đã done/archived/failed hoặc không còn trên board."""
+    """Xóa artifacts của task archived/failed hoặc không còn trên board.
+
+    Giữ artifacts khi status=done — board vẫn hiển thị screenshot QA.
+    """
     from .board import store
 
     root = config.ARTIFACTS_DIR
@@ -127,15 +130,15 @@ def cleanup_orphan_artifacts() -> int:
         if not d.is_dir():
             continue
         task = store.get_task(d.name)
-        if task is None or task.status in ("done", "archived", "failed"):
+        if task is None or task.status in ("archived", "failed"):
             if remove_artifact_dir(d.name):
                 n += 1
     return n
 
 
 def on_task_terminal(task_id: str, status: str) -> None:
-    """Gọi khi task chuyển sang done/archived — dọn artifacts của cây task."""
-    if status not in ("done", "archived"):
+    """Dọn artifacts khi archive (không xóa lúc done — giữ bằng chứng Visual QA)."""
+    if status != "archived":
         return
     from .board import store
 
@@ -144,15 +147,14 @@ def on_task_terminal(task_id: str, status: str) -> None:
         remove_artifact_dir(task_id)
         return
 
-    # Task cha: dọn cả subtask. Task con: chỉ dọn khi cha cũng đã đóng,
-    # hoặc task độc lập (không có cha).
+    # Task cha: dọn cả subtask. Task con: chỉ dọn khi cha cũng archived.
     if not task.parent_id:
         children = [t.id for t in store.list_tasks(parent_id=task_id, include_archived=True)]
         cleanup_task_tree_artifacts(task_id, children)
         return
 
     parent = store.get_task(task.parent_id)
-    if parent and parent.status in ("done", "archived"):
+    if parent and parent.status == "archived":
         siblings = [t.id for t in store.list_tasks(parent_id=parent.id, include_archived=True)]
         cleanup_task_tree_artifacts(parent.id, siblings)
     elif parent is None:

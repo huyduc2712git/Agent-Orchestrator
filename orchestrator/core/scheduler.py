@@ -97,6 +97,36 @@ HANDOFF_INTERVAL_SECONDS = 15
 def _build_worker_prompt(task: Task) -> str:
     parts = [f"TASK {task.id}: {task.title}", "", task.description or "(không có mô tả)"]
 
+    # Preload tối đa 2 skill bodies (tags + heuristic native) — Reasonix on-demand còn lại qua run_skill
+    try:
+        from ..skills.loader import format_skills_block, match_skills_for_task
+        matched = match_skills_for_task(
+            title=task.title or "",
+            description=task.description or "",
+            tags=list(task.tags or []),
+            assignee=task.assignee or "",
+            max_skills=2,
+        )
+        if matched:
+            block = format_skills_block(matched)
+            if block:
+                parts += ["", block]
+            # Gắn tag skill lên task (board Skill meta) — không trùng
+            new_tags = [*(task.tags or [])]
+            changed = False
+            for sk in matched:
+                if sk.name not in new_tags:
+                    new_tags.append(sk.name)
+                    changed = True
+            if changed:
+                try:
+                    store.update_task_fields(task.id, tags=new_tags)
+                    task.tags = new_tags
+                except Exception:
+                    pass
+    except Exception:
+        log.exception("skills preload failed for %s", task.id)
+
     parent = store.get_task(task.parent_id) if task.parent_id else None
     if parent:
         parts += ["", f"Bối cảnh task cha ({parent.id}): {parent.title}",

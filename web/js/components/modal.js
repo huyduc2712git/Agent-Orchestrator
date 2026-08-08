@@ -93,20 +93,78 @@ const AGENT_ROLE_TITLE = {
   operator: "Operator",
 };
 
-function formatEventMessage(msg) {
+function qaShotHtml(url, label = "View Screenshot") {
+  // Chỉ gỡ ) ] thừa từ markdown — không đụng đuôi .png
+  const safe = String(url || "").replace(/[)\]]+$/g, "").trim();
+  if (!safe) return "";
+  const title = escapeHtml(String(label || "View Screenshot").trim() || "View Screenshot");
+  const href = escapeHtml(safe);
+  return (
+    `<div class="qa-shot">` +
+    `<a href="${href}" target="_blank" rel="noopener" class="qa-shot-link">📸 ${title}</a>` +
+    `<img src="${href}" alt="${title}" loading="lazy"/>` +
+    `</div>`
+  );
+}
+
+/** sqa-* liên quan task (chính nó / con / anh em) — khi report chỉ ghi tên file. */
+function resolveArtifactTaskIds(eventTaskId) {
+  if (!eventTaskId) return [];
+  const ids = [];
+  if (/^sqa-/i.test(eventTaskId)) ids.push(eventTaskId);
+  const t = state.tasks.get(eventTaskId);
+  const root = t?.parent_id || eventTaskId;
+  if (/^sqa-/i.test(root)) ids.push(root);
+  for (const c of state.tasks.values()) {
+    if (c.parent_id === root && /^sqa-/i.test(c.id)) ids.push(c.id);
+  }
+  return [...new Set(ids)];
+}
+
+function enrichScreenshotCodes(html, artifactIds) {
+  if (!html || !artifactIds?.length) return html;
+  return html.replace(
+    /<code class="event-inline-code">([a-z0-9][\w.-]*?)(\.png)?<\/code>/gi,
+    (full, name, ext) => {
+      if (!/(desktop|mobile|shot|screenshot|diff|api-ping|api_ping|interact|lesson|home|faq|dark|light|mid)/i.test(name)) {
+        return full;
+      }
+      const file = `${name}${ext || ".png"}`;
+      return qaShotHtml(`/artifacts/${artifactIds[0]}/${file}`, name);
+    }
+  );
+}
+
+function formatEventMessage(msg, opts = {}) {
   if (!msg) return "";
   msg = String(msg).replace(
     /(https?:\/\/[^\s<>"']+\/preview\/[a-z0-9_-]+)(?![\w./#-])/gi,
     "$1/"
   );
   let s = escapeHtml(msg);
-  
-  s = s.replace(/(view_url|diff_view_url):\s*(https?:\/\/[^\s<]+)/gi, (_, _k, url) =>
-    `<div class="qa-shot"><a href="${url}" target="_blank" class="qa-shot-link">📸 View Screenshot</a><img src="${url}" alt="screenshot" loading="lazy"/></div>`);
-  s = s.replace(/(https?:\/\/[^\s<]+\/artifacts\/[^\s<]+\.png)/gi, (url) =>
-    `<div class="qa-shot"><a href="${url}" target="_blank" class="qa-shot-link">📸 View Screenshot</a><img src="${url}" alt="screenshot" loading="lazy"/></div>`);
 
-  s = s.replace(/(https?:\/\/[^\s<]+\/preview\/[a-z0-9_-]+\/?)/gi, (url) => {
+  // Markdown [label](artifact/image url) → thumbnail (Heiji hay dùng dạng này)
+  s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/gi, (full, label, url) => {
+    if (/\/artifacts\//i.test(url) || /\.(png|jpe?g|webp|gif)(\?|#|$)/i.test(url)) {
+      return qaShotHtml(url, label);
+    }
+    return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(label)}</a>`;
+  });
+
+  s = s.replace(/(view_url|diff_view_url):\s*(https?:\/\/[^\s<)\]"']+)/gi, (_, _k, url) =>
+    qaShotHtml(url));
+
+  // Bare artifact / image URL (không lấy luôn dấu ) ] của markdown)
+  s = s.replace(
+    /(https?:\/\/[^\s<)"'\]]+\/artifacts\/[^\s<)"'\]]+\.(?:png|jpe?g|webp|gif))/gi,
+    (url) => qaShotHtml(url)
+  );
+  s = s.replace(
+    /(^|[\s(])(\/artifacts\/[A-Za-z0-9_-]+\/[^\s<)"'\]]+\.(?:png|jpe?g|webp|gif))/g,
+    (_, pre, path) => pre + qaShotHtml(path)
+  );
+
+  s = s.replace(/(https?:\/\/[^\s<)"'\]]+\/preview\/[a-z0-9_-]+\/?)/gi, (url) => {
     let href = url.endsWith("/") ? url : url + "/";
     return `<a href="${href}" target="_blank" rel="noopener">${url}</a>`;
   });
@@ -118,6 +176,11 @@ function formatEventMessage(msg) {
   s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
 
   s = s.replace(/`([^`]+)`/g, '<code class="event-inline-code">$1</code>');
+
+  // Heiji/Haibara chỉ ghi `desktop-top` → /artifacts/<sqa>/desktop-top.png
+  const fromMsg = [...String(msg).matchAll(/\b(sqa-[0-9]+)\b/gi)].map((m) => m[1]);
+  const artifactIds = [...new Set([...(opts.artifactTaskIds || []), ...fromMsg])];
+  s = enrichScreenshotCodes(s, artifactIds);
 
   s = s.replace(/✅/g, '<span class="icon-pass">✅</span>');
   s = s.replace(/❌/g, '<span class="icon-fail">❌</span>');
@@ -186,13 +249,16 @@ export function renderEvent(e) {
   div.className = `event kind-${e.kind} agent-event-${agent}`;
 
   const formattedTime = e.created_at ? new Date(e.created_at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }) : "";
-  const formattedBody = formatEventMessage(e.message);
+  const formattedBody = formatEventMessage(e.message, {
+    artifactTaskIds: resolveArtifactTaskIds(e.task_id || state.openTaskId),
+  });
 
   const isStructured = e.message && (
     e.message.includes("|") || 
     e.message.includes("##") || 
-    e.message.includes("http") || 
-    agent === "haibara" || agent === "akai" || agent === "amuro"
+    e.message.includes("http") ||
+    e.message.includes("Screenshot") ||
+    agent === "haibara" || agent === "heiji" || agent === "akai" || agent === "amuro"
   );
 
   const bodyContent = isStructured

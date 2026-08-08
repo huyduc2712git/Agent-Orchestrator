@@ -2,6 +2,7 @@
 
 import { state, $, escapeHtml, updateChatModelPill } from "../state.js";
 import { API_BASE, loadSettings } from "../api.js";
+import { useSkillInChat } from "./chat.js";
 
 export function openSettingsModal() {
   const backdrop = $("settings-backdrop");
@@ -34,6 +35,7 @@ export function initSettingsEvents() {
       const tabId = btn.dataset.tab;
       const tabEl = $(tabId);
       if (tabEl) tabEl.classList.remove("hidden");
+      if (tabId === "tab-skills") loadAndRenderSkillsCatalog();
     });
   });
 
@@ -56,6 +58,7 @@ async function loadAndRenderSettings() {
     renderGitTokens(data.git_tokens || []);
     renderProjectsRoot(data.projects_root || "", data.projects_root_custom || "");
     renderFocusProject(data.active_project || state.activeProject || "", data.active_project_detail || null);
+    loadAndRenderSkillsCatalog();
 
     // Update global state
     if (data.agents && Array.isArray(data.agents)) {
@@ -67,6 +70,69 @@ async function loadAndRenderSettings() {
     updateChatModelPill();
   } catch (err) {
     console.error("Failed to load settings:", err);
+  }
+}
+
+async function loadAndRenderSkillsCatalog() {
+  const host = $("skills-catalog");
+  if (!host) return;
+  host.innerHTML = `<p class="settings-hint">Đang tải skills…</p>`;
+  try {
+    const res = await fetch(`${API_BASE}/api/skills`);
+    const data = await res.json();
+    const by = data.by_source || {};
+    const order = ["agent", "native", "reasonix", "addy", "workspace"];
+    const labels = {
+      agent: "Agent profiles (subagent system prompts)",
+      native: "Native (Orchestrator)",
+      reasonix: "Reasonix builtins (adapted)",
+      addy: "addyosmani/agent-skills",
+      workspace: "Workspace overrides",
+    };
+    let html = "";
+    for (const src of order) {
+      const list = by[src] || [];
+      if (!list.length) continue;
+      html += `<div class="skills-group"><div class="panel-title">${escapeHtml(labels[src] || src)} (${list.length})</div>`;
+      html += list.map((s) => {
+        const tools = (s.allowed_tools || []).slice(0, 6).join(", ") || "inherit agent tools";
+        const nTools = (s.allowed_tools || []).length;
+        const isAgentProfile = s.source === "agent" && (s.invocation === "manual" || s.runAs === "subagent");
+        const invokeBlock = isAgentProfile
+          ? `<div class="skill-card-cmd"><code>System prompt · agent-key ${escapeHtml(s.agent_key || s.name)}</code></div>`
+          : `<div class="skill-card-cmd">
+            <code>Invoke in chat @${escapeHtml(s.name)}</code>
+            <button type="button" class="btn-use-skill" data-skill="${escapeHtml(s.name)}">Use in chat</button>
+          </div>`;
+        return `
+        <div class="skill-card">
+          <div class="skill-card-head">
+            <span class="skill-card-name">/${escapeHtml(s.name)}</span>
+            <span class="skill-badges">
+              <span class="skill-badge">${escapeHtml(s.source)}</span>
+              ${isAgentProfile ? `<span class="skill-badge">subagent</span>` : ""}
+              <span class="skill-badge" title="${escapeHtml(tools)}">${nTools || "—"} tools</span>
+            </span>
+          </div>
+          <p class="skill-card-desc">${escapeHtml(s.description || "")}</p>
+          ${invokeBlock}
+          <div class="skill-card-meta">
+            <span>${isAgentProfile ? "Role profile" : "Model: Inherit default"}</span>
+            <span class="skill-badge dim">${isAgentProfile ? "manual" : "Inherited"}</span>
+          </div>
+        </div>`;
+      }).join("");
+      html += `</div>`;
+    }
+    host.innerHTML = html || `<p class="settings-hint">Chưa có skill nào.</p>`;
+    host.querySelectorAll(".btn-use-skill").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        useSkillInChat(btn.dataset.skill);
+        closeSettingsModal();
+      });
+    });
+  } catch (e) {
+    host.innerHTML = `<p class="settings-hint">Lỗi tải skills: ${escapeHtml(e.message || String(e))}</p>`;
   }
 }
 

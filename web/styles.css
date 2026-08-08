@@ -75,7 +75,7 @@ body.sidebar-collapsed .project-tasks,
 body.sidebar-collapsed .sidebar-task,
 body.sidebar-collapsed .sidebar-task *,
 body.sidebar-collapsed .sidebar-hint,
-body.sidebar-collapsed .dot {
+body.sidebar-collapsed .sidebar .dot {
   display: none !important;
   visibility: hidden !important;
   opacity: 0 !important;
@@ -1219,6 +1219,13 @@ body.sidebar-collapsed .sidebar-settings {
 .chat-mention-item .chat-skill-pill.menu {
   flex: 0 0 auto;
 }
+.chat-mention-item .mention-src {
+  flex: 0 0 auto;
+  font-size: 0.65rem;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
 .chat-mention-item .mention-desc {
   flex: 1 1 auto;
   min-width: 0;
@@ -1311,9 +1318,9 @@ body.sidebar-collapsed .sidebar-settings {
 
 /* Loading / Thinking Animation */
 .msg-bubble.thinking-bubble {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0;
   background: #111320;
   border: 1px solid #1e2238;
   color: #94a3b8;
@@ -1322,6 +1329,31 @@ body.sidebar-collapsed .sidebar-settings {
   border-radius: 16px;
   border-top-left-radius: 4px;
 }
+.thinking-text {
+  color: #94a3b8;
+}
+/* Dấu ... chạy tuần tự sau "đang suy nghĩ" */
+.thinking-ellipsis {
+  display: inline-flex;
+  min-width: 1.1em;
+  letter-spacing: 0.02em;
+  color: #60a5fa;
+  font-weight: 700;
+}
+.thinking-ellipsis span {
+  opacity: 0.15;
+  animation: thinkingDotPulse 1.2s infinite ease-in-out;
+}
+.thinking-ellipsis span:nth-child(1) { animation-delay: 0s; }
+.thinking-ellipsis span:nth-child(2) { animation-delay: 0.2s; }
+.thinking-ellipsis span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes thinkingDotPulse {
+  0%, 80%, 100% { opacity: 0.15; transform: translateY(0); }
+  40% { opacity: 1; transform: translateY(-1px); }
+}
+
+/* Giữ class cũ nếu còn chỗ khác dùng */
 .typing-dots {
   display: inline-flex;
   align-items: center;
@@ -1513,6 +1545,53 @@ body.sidebar-collapsed .sidebar-settings {
   border-radius: 3px;
   word-break: break-all;
 }
+
+/* Settings — Skills catalog */
+.skills-catalog { display: flex; flex-direction: column; gap: 22px; }
+.skills-group { display: flex; flex-direction: column; gap: 10px; }
+.skill-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border, #2a2d3a);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.skill-card-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin-bottom: 6px;
+}
+.skill-card-name {
+  font-weight: 650; font-size: 0.95rem; color: #f4f4f5;
+  font-family: "SF Mono", Consolas, ui-monospace, monospace;
+}
+.skill-badges { display: flex; gap: 6px; flex-wrap: wrap; }
+.skill-badge {
+  font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 2px 7px; border-radius: 999px;
+  background: rgba(251, 146, 60, 0.12); color: #fdba74;
+  border: 1px solid rgba(251, 146, 60, 0.35);
+}
+.skill-badge.dim {
+  background: rgba(255, 255, 255, 0.06); color: #a1a1aa;
+  border-color: rgba(255, 255, 255, 0.12);
+}
+.skill-card-desc {
+  margin: 0 0 10px; font-size: 0.82rem; line-height: 1.45; color: #a1a1aa;
+}
+.skill-card-cmd {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  background: #0c0e14; border-radius: 8px; padding: 8px 10px; margin-bottom: 8px;
+}
+.skill-card-cmd code { font-size: 0.78rem; color: #d4d4d8; }
+.btn-use-skill {
+  border: none; border-radius: 6px; padding: 6px 10px; cursor: pointer;
+  background: #ea580c; color: #fff; font-size: 0.75rem; font-weight: 600;
+  white-space: nowrap;
+}
+.btn-use-skill:hover { background: #f97316; }
+.skill-card-meta {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 0.72rem; color: #71717a;
+}
 .panel-title {
   font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.08em;
   color: var(--text-dim); margin-bottom: 10px;
@@ -1653,6 +1732,9 @@ body.sidebar-collapsed .sidebar-settings {
   border-radius: 4px;
   padding: 1px 6px;
   margin: 0 2px;
+  white-space: nowrap;
+  word-break: keep-all;
+  overflow-wrap: normal;
 }
 .badge-fail {
   display: inline-block;
@@ -1664,6 +1746,9 @@ body.sidebar-collapsed .sidebar-settings {
   border-radius: 4px;
   padding: 1px 6px;
   margin: 0 2px;
+  white-space: nowrap;
+  word-break: keep-all;
+  overflow-wrap: normal;
 }
 
 .qa-table {
@@ -1674,6 +1759,7 @@ body.sidebar-collapsed .sidebar-settings {
   border-radius: 6px;
   overflow: hidden;
   border: 1px solid #27272a;
+  table-layout: auto;
 }
 .qa-table th {
   background: #1c1c20;
@@ -1682,12 +1768,19 @@ body.sidebar-collapsed .sidebar-settings {
   padding: 6px 10px;
   border-bottom: 1px solid #27272a;
   text-align: left;
+  white-space: nowrap;
 }
 .qa-table td {
   background: #141416;
   color: #e4e4e7;
   padding: 6px 10px;
   border-bottom: 1px solid #222226;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.qa-table td .badge-pass,
+.qa-table td .badge-fail {
+  white-space: nowrap;
 }
 .qa-table tr:last-child td {
   border-bottom: none;
