@@ -269,6 +269,78 @@ export function renderCard(t, isLatestDone = false) {
   return card;
 }
 
+const ACTIVE_STATUS_RANK = {
+  in_progress: 0,
+  testing: 1,
+  review: 2,
+  blocked: 3,
+  failed: 4,
+  backlog: 5,
+  done: 6,
+};
+
+function taskPath(t) {
+  if (!t) return "";
+  const meta = parseMeta(t);
+  return meta.branch || (t.project_dir
+    ? t.project_dir.replace(/^.*[\\/]projects[\\/]/, "demo/")
+    : `demo/${t.project}`);
+}
+
+function pickFocusTask(parents) {
+  const ranked = parents
+    .filter((t) => ACTIVE_STATUS_RANK[t.status] !== undefined && t.status !== "done" && t.status !== "archived")
+    .sort((a, b) => {
+      const ra = ACTIVE_STATUS_RANK[a.status] ?? 99;
+      const rb = ACTIVE_STATUS_RANK[b.status] ?? 99;
+      if (ra !== rb) return ra - rb;
+      const timeA = a.updated_at ? new Date(a.updated_at).getTime() : 0;
+      const timeB = b.updated_at ? new Date(b.updated_at).getTime() : 0;
+      return timeB - timeA;
+    });
+  return ranked[0] || null;
+}
+
+export function updateBoardFocus(parents = null) {
+  const pathEl = $("board-focus-path");
+  const taskEl = $("board-focus-task");
+  const pillEl = $("board-focus-pill");
+  if (!pathEl || !taskEl || !pillEl) return;
+
+  if (!state.activeProject) {
+    pathEl.textContent = "— chưa chọn project";
+    taskEl.textContent = "";
+    taskEl.hidden = true;
+    pillEl.hidden = true;
+    pillEl.innerHTML = "";
+    pillEl.className = "board-focus-pill";
+    return;
+  }
+
+  const list = parents || [...state.tasks.values()].filter(
+    (t) => !t.parent_id && t.project === state.activeProject,
+  );
+  const focus = pickFocusTask(list);
+  const path = focus ? taskPath(focus) : `demo/${state.activeProject}`;
+  pathEl.textContent = path;
+
+  if (focus) {
+    taskEl.textContent = focus.title || focus.id || "";
+    taskEl.hidden = !taskEl.textContent;
+    const meta = parseMeta(focus);
+    const pill = pillFor(focus, meta);
+    pillEl.className = `board-focus-pill pill ${pill.cls}`;
+    pillEl.innerHTML = `<span class="pill-dot"></span>${escapeHtml(pill.text)}`;
+    pillEl.hidden = false;
+  } else {
+    taskEl.textContent = "Không có task đang chạy";
+    taskEl.hidden = false;
+    pillEl.className = "board-focus-pill pill pill-backlog";
+    pillEl.innerHTML = `<span class="pill-dot"></span>Idle`;
+    pillEl.hidden = false;
+  }
+}
+
 export function renderBoard() {
   const board = $("board");
   if (!board) return;
@@ -309,6 +381,7 @@ export function renderBoard() {
     colEl.appendChild(body);
     board.appendChild(colEl);
   }
+  updateBoardFocus(parents);
   updateFooterProject();
   renderSidebar();
 }

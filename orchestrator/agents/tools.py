@@ -1111,6 +1111,22 @@ class ToolContext:
                 "hoặc lệnh server trực tiếp (npm run dev / node server)"
             )
 
+    @staticmethod
+    def _infer_api_base_from_command(command: str) -> str:
+        """Suy api_base từ lệnh start (vd -p 4010, --port 3000, :3000)."""
+        cmd = command or ""
+        m = re.search(r"(?:--port|-p)\s+(\d{2,5})\b", cmd, re.I)
+        if not m:
+            m = re.search(r"localhost:(\d{2,5})\b|:(\d{2,5})\b", cmd, re.I)
+        port = None
+        if m:
+            port = m.group(1) or (m.group(2) if m.lastindex and m.lastindex >= 2 else None)
+        if not port and re.search(r"\bprism\b", cmd, re.I):
+            port = "4010"  # Prism mock default
+        if not port:
+            return ""
+        return f"http://127.0.0.1:{port}"
+
     def _auto_save_start_command(self, command: str) -> None:
         """Tự động lưu lệnh start backend vào project settings khi chạy server ngầm thành công."""
         try:
@@ -1126,10 +1142,17 @@ class ToolContext:
                     clean_cmd = m.group(1).strip().strip('"').strip("'")
                 else:
                     clean_cmd = command.strip()
-            proj = settings.get_project(slug)
-            if proj and not proj.get("start_command"):
-                settings.upsert_project(slug, start_command=clean_cmd)
-                log.info("Auto-saved start_command cho project '%s': %s", slug, clean_cmd)
+            proj = settings.get_project(slug) or {}
+            kwargs: dict = {}
+            if not proj.get("start_command"):
+                kwargs["start_command"] = clean_cmd
+            if not (proj.get("api_base") or "").strip():
+                inferred = self._infer_api_base_from_command(command) or self._infer_api_base_from_command(clean_cmd)
+                if inferred:
+                    kwargs["api_base"] = inferred
+            if kwargs:
+                settings.upsert_project(slug, **kwargs)
+                log.info("Auto-saved project '%s' settings: %s", slug, kwargs)
         except Exception as e:
             log.warning("Không thể auto-save start_command: %s", e)
 
@@ -1139,8 +1162,19 @@ class ToolContext:
         if not slug:
             return "ERROR: task không gắn project — không thể lưu start_command"
         try:
-            settings.upsert_project(slug, start_command=command.strip())
-            return f"OK: Đã lưu start_command cho project '{slug}': {command.strip()}\nOrchestrator sẽ tự động chạy lệnh này khi khởi động lần sau."
+            kwargs: dict = {"start_command": command.strip()}
+            proj = settings.get_project(slug) or {}
+            extra = ""
+            if not (proj.get("api_base") or "").strip():
+                inferred = self._infer_api_base_from_command(command)
+                if inferred:
+                    kwargs["api_base"] = inferred
+                    extra = f"\nĐã suy api_base={inferred} (proxy Live /api → backend)."
+            settings.upsert_project(slug, **kwargs)
+            return (
+                f"OK: Đã lưu start_command cho project '{slug}': {command.strip()}\n"
+                f"Orchestrator sẽ tự động chạy lệnh này khi khởi động lần sau.{extra}"
+            )
         except Exception as e:
             return f"ERROR: {e}"
 
@@ -1459,12 +1493,11 @@ class ToolContext:
         result = git_ops.ensure_clone(url, self.project_dir, branch=branch or "")
         if not result.get("ok"):
             return f"ERROR: {result.get('error', 'clone failed')}"
-        # Nếu clone vào thư mục con, cập nhật project_dir của task để agent làm đúng chỗ
+        # Clone vào thư mục con → chỉ chuyển project_dir của task hiện tại.
+        # KHÔNG đổi parent (tránh biến project FE gốc thành api/duolingo-api).
         new_path = result.get("path") or ""
         if new_path and Path(new_path).resolve() != self.project_dir.resolve():
             store.update_task_fields(self.task.id, project_dir=new_path)
-            if self.task.parent_id:
-                store.update_task_fields(self.task.parent_id, project_dir=new_path)
             self.project_dir = Path(new_path)
             self.task.project_dir = new_path
         lines = [

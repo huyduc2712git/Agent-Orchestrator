@@ -160,8 +160,13 @@ async def run_agent(
                 args = {}
             log.info("[%s/%s] tool %s(%s)", agent_name, task.id, name,
                      json.dumps(args, ensure_ascii=False)[:200])
+            # Heartbeat trước tool dài (npm install…) — updated_at còn tươi trong lúc block
+            try:
+                store.touch_task(task.id)
+            except Exception:
+                pass
             result = await asyncio.to_thread(ctx.execute, name, args)
-            # Heartbeat: tool call = agent còn sống (tránh Auto-Recovery đẩy backlog nhầm)
+            # Heartbeat: tool xong = agent còn sống (tránh Auto-Recovery đẩy backlog nhầm)
             try:
                 store.touch_task(task.id)
                 cur = store.get_task(task.id)

@@ -18,6 +18,7 @@
           "/static/js/api.js": "/static/js/api.js?v=__ASSET_V__",
           "/static/js/state.js": "/static/js/state.js?v=__ASSET_V__",
           "/static/js/constants.js": "/static/js/constants.js?v=__ASSET_V__",
+          "/static/js/sound.js": "/static/js/sound.js?v=__ASSET_V__",
           "/static/js/components/board.js": "/static/js/components/board.js?v=__ASSET_V__",
           "/static/js/components/sidebar.js": "/static/js/components/sidebar.js?v=__ASSET_V__",
           "/static/js/components/modal.js": "/static/js/components/modal.js?v=__ASSET_V__",
@@ -153,11 +154,29 @@
         <!-- BOARD -->
         <section class="view view-board" id="view-board">
           <header class="board-toolbar">
-            <div class="board-toolbar-left">
-              <h1 class="board-title">Task Boards</h1>
-              <span class="board-subtitle" id="board-subtitle"
-                >Live agent sessions flowing from work → review → merge.</span
+            <div class="board-toolbar-left" id="board-focus">
+              <svg
+                class="board-focus-icon"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
               >
+                <line x1="6" y1="3" x2="6" y2="15"></line>
+                <circle cx="18" cy="6" r="3"></circle>
+                <circle cx="6" cy="18" r="3"></circle>
+                <path d="M18 9a9 9 0 0 1-9 9"></path>
+              </svg>
+              <div class="board-focus-text">
+                <span class="board-focus-path" id="board-focus-path">— chưa chọn project</span>
+                <span class="board-focus-task" id="board-focus-task"></span>
+              </div>
+              <span class="board-focus-pill" id="board-focus-pill" hidden></span>
             </div>
             <div class="board-toolbar-right">
               <button class="btn-orchestrator" id="btn-orchestrator">

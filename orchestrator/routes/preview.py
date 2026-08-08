@@ -333,7 +333,12 @@ async def proxy_project_api(path: str, request: Request):
             status_code=502,
         )
 
-    url = f"{api_base}/api/{path}"
+    sp = settings.get_project(slug) or {}
+    # bug-9462: mock spec (Prism basePath '/') has no /api prefix in routes --
+    # forwarding /api/{path} as-is caused NO_PATH_MATCHED 404. Per-project
+    # opt-in 'api_strip_prefix': true forwards /api/{path} -> {api_base}/{path}.
+    strip_prefix = bool(sp.get('api_strip_prefix'))
+    url = f"{api_base}/{path}" if strip_prefix else f"{api_base}/api/{path}"
     if request.url.query:
         url = f"{url}?{request.url.query}"
 

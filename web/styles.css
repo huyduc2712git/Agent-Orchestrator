@@ -359,27 +359,142 @@ body.sidebar-collapsed .sidebar-settings {
 }
 .board-toolbar-left {
   display: flex;
-  align-items: baseline;
-  gap: 12px;
+  align-items: center;
+  gap: 10px;
   min-width: 0;
   flex: 1 1 auto;
   overflow: hidden;
 }
-.board-toolbar-left h1.board-title {
-  font-size: 1.4rem;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  color: #fafafa;
+.board-focus-icon {
   flex-shrink: 0;
+  color: #52525b;
+  width: 16px;
+  height: 16px;
 }
-.board-subtitle {
+.board-focus-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.board-focus-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.86rem;
+  font-weight: 500;
   color: #71717a;
-  font-size: 0.82rem;
-  font-weight: 400;
+  letter-spacing: -0.01em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  min-width: 0;
+}
+.board-focus-task {
+  display: none;
+}
+.board-focus-pill {
+  flex-shrink: 0;
+  margin-left: 4px;
+  padding: 3px 12px !important;
+  border-radius: 999px !important;
+  font-size: 0.78rem !important;
+  font-weight: 700 !important;
+  line-height: 1.4 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 7px !important;
+  white-space: nowrap !important;
+  letter-spacing: -0.01em;
+  transition: all 0.2s ease;
+}
+.board-focus-pill .pill-dot {
+  width: 7px !important;
+  height: 7px !important;
+  border-radius: 50% !important;
+  flex-shrink: 0 !important;
+  display: inline-block !important;
+}
+
+.board-focus-pill.pill-working {
+  border: 1px solid rgba(245, 158, 11, 0.45) !important;
+  background: rgba(245, 158, 11, 0.12) !important;
+  color: #f59e0b !important;
+  box-shadow: 0 0 12px rgba(245, 158, 11, 0.12) !important;
+}
+.board-focus-pill.pill-working .pill-dot {
+  background: #f59e0b !important;
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.95) !important;
+}
+
+.board-focus-pill.pill-changes,
+.board-focus-pill.pill-blocked {
+  border: 1px solid rgba(234, 179, 8, 0.45) !important;
+  background: rgba(234, 179, 8, 0.12) !important;
+  color: #fbbf24 !important;
+  box-shadow: 0 0 12px rgba(234, 179, 8, 0.12) !important;
+}
+.board-focus-pill.pill-changes .pill-dot,
+.board-focus-pill.pill-blocked .pill-dot {
+  background: #fbbf24 !important;
+  box-shadow: 0 0 8px rgba(251, 191, 36, 0.95) !important;
+}
+
+.board-focus-pill.pill-testing {
+  border: 1px solid rgba(56, 189, 248, 0.45) !important;
+  background: rgba(56, 189, 248, 0.12) !important;
+  color: #38bdf8 !important;
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.12) !important;
+}
+.board-focus-pill.pill-testing .pill-dot {
+  background: #38bdf8 !important;
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.95) !important;
+}
+
+.board-focus-pill.pill-review,
+.board-focus-pill.pill-pending {
+  border: 1px solid rgba(167, 139, 250, 0.45) !important;
+  background: rgba(167, 139, 250, 0.12) !important;
+  color: #a78bfa !important;
+  box-shadow: 0 0 12px rgba(167, 139, 250, 0.12) !important;
+}
+.board-focus-pill.pill-review .pill-dot,
+.board-focus-pill.pill-pending .pill-dot {
+  background: #a78bfa !important;
+  box-shadow: 0 0 8px rgba(167, 139, 250, 0.95) !important;
+}
+
+.board-focus-pill.pill-failed {
+  border: 1px solid rgba(239, 68, 68, 0.45) !important;
+  background: rgba(239, 68, 68, 0.12) !important;
+  color: #ef4444 !important;
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.12) !important;
+}
+.board-focus-pill.pill-failed .pill-dot {
+  background: #ef4444 !important;
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.95) !important;
+}
+
+.board-focus-pill.pill-ready,
+.board-focus-pill.pill-done {
+  border: 1px solid rgba(52, 211, 153, 0.45) !important;
+  background: rgba(52, 211, 153, 0.12) !important;
+  color: #34d399 !important;
+  box-shadow: 0 0 12px rgba(52, 211, 153, 0.12) !important;
+}
+.board-focus-pill.pill-ready .pill-dot,
+.board-focus-pill.pill-done .pill-dot {
+  background: #34d399 !important;
+  box-shadow: 0 0 8px rgba(52, 211, 153, 0.95) !important;
+}
+
+.board-focus-pill.pill-backlog,
+.board-focus-pill.pill-queued {
+  border: 1px solid rgba(148, 163, 184, 0.35) !important;
+  background: rgba(148, 163, 184, 0.1) !important;
+  color: #94a3b8 !important;
+}
+.board-focus-pill.pill-backlog .pill-dot,
+.board-focus-pill.pill-queued .pill-dot {
+  background: #94a3b8 !important;
+  box-shadow: 0 0 6px rgba(148, 163, 184, 0.7) !important;
 }
 .board-toolbar-right {
   display: flex;
@@ -419,14 +534,26 @@ body.sidebar-collapsed .sidebar-settings {
 .btn-orchestrator:hover { background: #1d4ed8; }
 .icon-btn.bell-btn {
   width: 32px; height: 32px;
-  border: 1px solid #27272a;
+  border: none;
   border-radius: 6px;
-  background: #141416;
-  color: #a1a1aa;
+  background: transparent;
+  color: #71717a;
   cursor: pointer;
   display: flex; align-items: center; justify-content: center;
+  transition: color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+  position: relative;
 }
-.icon-btn.bell-btn:hover { background: #1c1c20; color: #fafafa; }
+.icon-btn.bell-btn:hover { background: rgba(255, 255, 255, 0.06); color: #f4f4f5; }
+.icon-btn.bell-btn.sound-muted { color: #3f3f46; opacity: 0.5; }
+.icon-btn.bell-btn.ringing {
+  color: #fbbf24;
+  animation: bell-ring 0.55s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+@keyframes bell-ring {
+  0%, 100% { transform: rotate(0); }
+  20%, 60% { transform: rotate(14deg); }
+  40%, 80% { transform: rotate(-14deg); }
+}
 
 .sidebar-brand .sidebar-toggle-btn {
   margin-left: auto;
@@ -2276,11 +2403,11 @@ body.sidebar-collapsed .sidebar-settings {
     flex-wrap: wrap;
     gap: 8px;
   }
-  .board-toolbar-left h1.board-title {
-    font-size: 1.25rem;
+  .board-focus-path {
+    font-size: 0.85rem;
   }
-  .board-subtitle {
-    display: none !important;
+  .board-focus-task {
+    display: none;
   }
   .board-toolbar-right {
     margin-left: auto;
@@ -2296,8 +2423,8 @@ body.sidebar-collapsed .sidebar-settings {
     min-width: 0;
     flex: 0 1 auto;
   }
-  .board-toolbar-left h1.board-title {
-    font-size: 1.15rem;
+  .board-focus-path {
+    font-size: 0.8rem;
   }
   .board-toolbar-right {
     margin-left: auto;
@@ -2404,8 +2531,8 @@ body.sidebar-collapsed .sidebar-settings {
   .board-toolbar {
     padding: 12px 12px 10px;
   }
-  .board-toolbar-left h1.board-title {
-    font-size: 1.1rem;
+  .board-focus-path {
+    font-size: 0.76rem;
   }
   .btn-ghost, .btn-orchestrator {
     padding: 5px 10px;

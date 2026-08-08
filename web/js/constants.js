@@ -4,8 +4,7 @@ export const COLUMNS = [
   { key: "backlog", label: "To Do / Backlog", headClass: "col-backlog", statuses: ["backlog"] },
   { key: "working", label: "In Progress", headClass: "col-working", statuses: ["in_progress"] },
   { key: "blocked", label: "Needs Attention", headClass: "col-blocked", statuses: ["blocked", "failed"] },
-  { key: "testing", label: "In Testing / QA", headClass: "col-testing", statuses: ["testing"] },
-  { key: "review", label: "In Review", headClass: "col-review", statuses: ["review"] },
+  { key: "testing", label: "In Testing / QA", headClass: "col-testing", statuses: ["testing", "review"] },
   { key: "done", label: "Done / Ready", headClass: "col-done", statuses: ["done"] },
 ];
 

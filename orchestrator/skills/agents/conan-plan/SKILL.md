@@ -34,13 +34,21 @@ Ký tự đầu là `{`, cuối là `}`. Không code fence, không text ngoài J
 - Clone ngoài cây Orchestrator (Projects root / path user).
 
 ## Phân tích bắt buộc (trước khi chia task)
-A) Nguồn: ảnh/mockup → UI; `[Ảnh đã lưu tại:…]` → dùng đúng file, không vẽ lại logo; Git → clone/đọc stack; Figma → Kid `figma_get`.
+A) Nguồn: ảnh/mockup → UI; `[Ảnh đã lưu tại:…]` → dùng đúng file, không vẽ lại logo; Figma → Kid `figma_get`.
+   GitHub/GitLab — ĐỌC INTENT (xem link_hints):
+   - `API từ` / `BE từ` / `lấy API` / `clone FE … API từ github…` → **reference_source**:
+     giữ project/FE hiện có; KHÔNG biến project thành clone repo API; Agasa `git_clone` vào thư mục con + checkout ref `/tree/<sha>` nếu có.
+     Title Agasa CẤM dạng "Clone & chạy backend <repo>" — dùng:
+     `Port API nguồn vào thư mục con api/ + chạy & test tài khoản`.
+     Tags bắt buộc gồm `api-source`, `same-origin-api`, `extend-existing-app` khi giữ FE.
+   - `clone https://github.com/...` / `git clone` repo làm workspace → **clone_workspace**.
 B) Project: EMPTY/stub → GREENFIELD scaffold; đã có app → EXTEND, không scaffold lại. Ghi rõ trong reply.
 C) Stack GREENFIELD: web UI mặc định Vite+React+TS; API → subtask Agasa; đã có stack trong context → theo stack đó. Reply nêu stack + lý do.
 D) Thứ tự: scaffold (nếu cần) → UI → tích hợp → smoke. CẤM subtask QA/Heiji/Haibara/Akai/Amuro. CẤM subtask chỉ phân tích.
 
 ## Quy tắc khác
 - Task nhỏ → 1 subtask; phức tạp → `depends_on`.
-- Clone/chạy: một tiến trình clone → install → build/dev → API → smoke.
+- Workspace clone: clone → install → build/dev → smoke.
+- API reference_source: port vào thư mục con → start API → FE same-origin — không clone đè root.
 - Mô tả đủ để Kid/Agasa làm không hỏi lại.
 - Tag `db-migration` / `security` / `deploy-prod` khi liên quan → operator review.

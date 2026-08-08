@@ -853,9 +853,15 @@ async def handle_chat(
             + f"\nFigma preflight: OK via {via}; fileKey={file_key}; nodeId={node_id or '(root)'}."
         ).strip()
 
-    # Clone git: hỏi thư mục nếu user chưa chỉ định (tránh nhồi vào Orchestrator)
+    # Clone git: hỏi thư mục nếu user chưa chỉ định (tránh nhồi vào Orchestrator).
+    # Bỏ qua khi link chỉ là NGUỒN API/tham chiếu ("API từ github.com/...").
     git_early = next(
-        (x for x in detected_links if x.get("type") in ("github", "gitlab") and x.get("clone_url")),
+        (
+            x for x in detected_links
+            if x.get("type") in ("github", "gitlab")
+            and x.get("clone_url")
+            and x.get("clone_into_project", True)
+        ),
         None,
     )
     msg_path = forced_dir or extract_target_dir(user_message)
@@ -1013,17 +1019,36 @@ async def handle_chat(
             return
     app_settings.upsert_project(project_slug, project_dir=project_dir)
 
-    # GitHub/GitLab: clone vào project trước khi tạo subtask (parser-registry)
+    # GitHub/GitLab: chỉ auto-clone khi intent = clone workspace (không phải "API từ repo")
     git_link = next(
-        (x for x in detected_links if x.get("type") in ("github", "gitlab") and x.get("clone_url")),
+        (
+            x for x in detected_links
+            if x.get("type") in ("github", "gitlab")
+            and x.get("clone_url")
+            and x.get("clone_into_project", True)
+        ),
         None,
     )
     if not git_link:
-        # fallback: link trong description plan
-        git_link = default_registry.first_of_type(
-            tinfo.get("description", ""), "github", "gitlab"
+        # fallback: link trong description plan — vẫn tôn trọng intent theo message gốc
+        plan_links = detect_links(
+            f"{user_message}\n{tinfo.get('description', '')}"
+        )
+        git_link = next(
+            (
+                x for x in plan_links
+                if x.get("type") in ("github", "gitlab")
+                and x.get("clone_url")
+                and x.get("clone_into_project", True)
+            ),
+            None,
         )
     git_url = (git_link or {}).get("clone_url") or ""
+    git_ref = (git_link or {}).get("ref") or ""
+    ref_links = [
+        x for x in detected_links
+        if x.get("type") in ("github", "gitlab") and x.get("git_intent") == "reference_source"
+    ]
     extra_tags: list[str] = []
     for link in detected_links:
         for t in link.get("tags") or []:
@@ -1038,9 +1063,11 @@ async def handle_chat(
     if git_url:
         store.add_chat(
             "conan",
-            f"Đang clone `{git_url}` → `{project_dir}` ({dir_reason})…",
+            f"Đang clone `{git_url}`"
+            + (f" @ `{git_ref}`" if git_ref else "")
+            + f" → `{project_dir}` ({dir_reason})…",
         )
-        clone = git_ops.ensure_clone(git_url, project_dir)
+        clone = git_ops.ensure_clone(git_url, project_dir, branch=git_ref or "")
         if not clone.get("ok"):
             store.add_chat(
                 "conan",
@@ -1059,6 +1086,27 @@ async def handle_chat(
             f"Làm việc TRÊN repo này. Dùng git_status để xác nhận. "
             f"PIPELINE xong = install + build/start FE + start API (nếu có) + smoke http_get UI&API. "
             f"Không tự commit/push."
+        )
+        tinfo["description"] = (tinfo.get("description") or "") + git_note
+    elif ref_links:
+        bits = []
+        for rl in ref_links:
+            u = rl.get("url") or rl.get("clone_url")
+            ref = rl.get("ref") or ""
+            bits.append(f"{u}" + (f" @ `{ref}`" if ref else ""))
+        store.add_chat(
+            "conan",
+            "Link GitHub/GitLab hiểu là **nguồn API/tham chiếu** (không clone đè project):\n- "
+            + "\n- ".join(bits)
+            + f"\nGiữ project `{project_slug}` tại `{project_dir}`. "
+            "Agasa/Kid lấy API vào thư mục con, không thay FE.",
+        )
+        git_note = (
+            "\n\n[API source — không clone đè workspace]\n"
+            + "\n".join(f"- {b}" for b in bits)
+            + "\nGiữ FE/project hiện có. `git_clone` nguồn API vào thư mục con "
+            "(vd. `api/` / `vendor/<repo>`), checkout đúng commit/branch nếu có. "
+            "PIPELINE: API + same-origin /api + smoke Live URL + test account nếu user đưa."
         )
         tinfo["description"] = (tinfo.get("description") or "") + git_note
     elif msg_explicit or not is_under_orchestrator(project_dir):
@@ -1088,7 +1136,6 @@ async def handle_chat(
             description=st.get("description", ""),
             tags=normalized,
             assignee=agent or "kid",
-            max_skills=2,
         ):
             if sk.name not in normalized:
                 normalized.append(sk.name)
@@ -1101,6 +1148,21 @@ async def handle_chat(
         if steers:
             st["description"] = (st.get("description") or "") + "\n\n" + "\n".join(steers)
         st["tags"] = normalized
+
+        # reference_source: title LLM hay ghi "Clone & chạy backend…" → sửa wording
+        if (
+            (agent or "").lower() == "agasa"
+            and ("api-source" in normalized or any(
+                x.get("git_intent") == "reference_source" for x in detected_links
+            ))
+        ):
+            title = (st.get("title") or "").strip()
+            if re.search(r"\bclone\b", title, re.I) or re.search(
+                r"clone\s*&|chạy\s*backend", title, re.I
+            ):
+                st["title"] = (
+                    "Port API nguồn vào thư mục con + chạy & test tài khoản"
+                )
 
     # Ép chain tuần tự cho mọi build sub (kid/agasa) — bỏ parallel do planner.
     # Sub #n chỉ chạy khi #n-1 đã testing/done; QA chỉ sau khi hết build.
@@ -1381,21 +1443,48 @@ def project_has_real_app(project_dir: str) -> tuple[bool, str]:
         return False, f"thư mục không tồn tại: {root}"
 
     pkg = root / "package.json"
-    has_src = (root / "src").is_dir() or (root / "app").is_dir()
-    has_index = any(
+    # FE thường nằm subdir (frontend/client/web) — không chỉ root/src
+    src_candidates = (
+        root / "src",
+        root / "app",
+        root / "frontend" / "src",
+        root / "client" / "src",
+        root / "web" / "src",
+    )
+    has_src = any(p.is_dir() for p in src_candidates)
+    index_names = ("index.html", "main.py", "App.tsx", "App.jsx", "main.tsx", "main.jsx")
+    has_index = any((root / n).is_file() for n in index_names) or any(
+        (root / sub / n).is_file()
+        for sub in ("frontend", "client", "web", "src", "app")
+        for n in index_names
+    )
+    has_vite = any(
         (root / n).is_file()
-        for n in ("index.html", "main.py", "App.tsx", "App.jsx", "main.tsx", "main.jsx")
+        for n in ("vite.config.ts", "vite.config.js")
+    ) or any(
+        (root / sub / n).is_file()
+        for sub in ("frontend", "client", "web")
+        for n in ("vite.config.ts", "vite.config.js")
     )
     has_py = (root / "pyproject.toml").is_file() or (
         (root / "requirements.txt").is_file() and any(root.glob("*.py"))
     )
     has_rn = (root / "app.json").is_file() or (root / "app.config.js").is_file()
+    # API-mock / OpenAPI + FE (vd. Prism + swagger) cũng là app thật
+    has_api_spec = any(
+        (root / n).is_file()
+        for n in ("swagger.yaml", "swagger-complete.yaml", "openapi.yaml", "openapi.json")
+    )
 
     if pkg.is_file():
         try:
             data = json.loads(pkg.read_text(encoding="utf-8", errors="replace"))
             if data.get("dependencies") or data.get("devDependencies") or data.get("scripts"):
-                if has_src or has_index or (root / "vite.config.ts").is_file() or (root / "vite.config.js").is_file():
+                # OpenAPI/Prism mock repo: có package.json + swagger/openapi là deliverable BE hợp lệ
+                # (không có src/ FE — không đánh "scaffold chưa xong")
+                if has_api_spec:
+                    return True, "có package.json + OpenAPI/swagger (API mock/spec)"
+                if has_src or has_index or has_vite:
                     return True, "có package.json + source/vite"
                 return False, "có package.json nhưng chưa có src/index — scaffold chưa xong"
         except Exception:

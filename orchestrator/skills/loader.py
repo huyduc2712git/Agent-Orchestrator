@@ -1,4 +1,4 @@
-"""Load SKILL.md catalogs (native / reasonix / vendor/addy / workspace)."""
+"""Load SKILL.md catalogs (native / reasonix / vendor/* / workspace)."""
 from __future__ import annotations
 
 import logging
@@ -10,11 +10,24 @@ from pathlib import Path
 log = logging.getLogger("skills")
 
 _FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n(.*)\Z", re.S)
-_MAX_AUTO = 2
+_MAX_AUTO = 3
 _MAX_RUN_SKILL_PER_TASK = 3
 _DESC_INDEX_LEN = 110
 
-# Native heuristics (title+description) — only these auto-match without tags
+# Task dựng web/FE → tự ưu tiên quality skills (không cần @)
+_WEB_FE_CONTEXT = re.compile(
+    r"("
+    r"landing|website|web\s*app|webapp|\bspa\b|react|vite|next\.?js|"
+    r"frontend|\bui\b|ux\b|tsx|jsx|tailwind|shadcn|"
+    r"giao\s*diện|dựng\s*web|làm\s*web|làm\s*fe|clone.*\b(ui|fe|web|app)\b|"
+    r"trang\s*web|dashboard|admin\s*panel|live\s*url|/preview/"
+    r")",
+    re.I,
+)
+_WEB_FE_DEFAULTS_BUILD = ("frontend-design", "react-best-practices")
+_WEB_FE_DEFAULTS_QA = ("accessibility", "frontend-design")
+
+# Heuristics (title+description) — auto-match without tags
 _NATIVE_HEURISTICS: list[tuple[str, re.Pattern[str]]] = [
     ("replace-brand-assets", re.compile(
         r"(logo|favicon|apple-touch|pwa\s*icon|user-uploads|Ảnh đã lưu|brand\s*asset)",
@@ -28,6 +41,21 @@ _NATIVE_HEURISTICS: list[tuple[str, re.Pattern[str]]] = [
     )),
     ("extend-existing-app", re.compile(
         r"(không\s*scaffold|khong\s*scaffold|extend|đã có sẵn|da co san|existing\s*app)",
+        re.I,
+    )),
+    ("frontend-design", re.compile(
+        r"(frontend\s*design|ui\s*design|landing\s*page|thiết\s*kế\s*(ui|fe|giao\s*diện)|"
+        r"đẹp\s*hơn|visual\s*identity|brand\s*forward|anti[- ]?ai[- ]?slop)",
+        re.I,
+    )),
+    ("react-best-practices", re.compile(
+        r"(react\s*best|next\.?js\s*perf|bundle\s*size|re-?render|waterfall|"
+        r"tối\s*ưu\s*(react|bundle|perf)|performance\s*(react|next))",
+        re.I,
+    )),
+    ("accessibility", re.compile(
+        r"\b(a11y|accessibility|wcag|screen\s*reader|aria\b|keyboard\s*nav|"
+        r"khả\s*năng\s*tiếp\s*cận|truy\s*cập\s*web)\b",
         re.I,
     )),
 ]
@@ -124,8 +152,12 @@ def _source_from_path(path: Path, pkg: Path) -> str:
         return "native"
     if rel.startswith("reasonix/"):
         return "reasonix"
-    if rel.startswith("vendor/addy/"):
-        return "addy"
+    if rel.startswith("vendor/"):
+        # vendor/<pack>/... → source = pack name (addy, anthropic, vercel, …)
+        parts = rel.split("/")
+        if len(parts) >= 2 and parts[1]:
+            return parts[1]
+        return "vendor"
     if rel.startswith("agents/"):
         return "agent"
     return "builtin"
@@ -171,12 +203,24 @@ def _iter_skill_md(root: Path) -> list[Path]:
     return out
 
 
+def _vendor_layers(pkg: Path) -> list[tuple[str, list[Path]]]:
+    """Scan orchestrator/skills/vendor/<pack>/ — lowest priority first (alpha)."""
+    root = pkg / "vendor"
+    if not root.is_dir():
+        return []
+    layers: list[tuple[str, list[Path]]] = []
+    for sub in sorted(root.iterdir(), key=lambda p: p.name.lower()):
+        if sub.is_dir() and not sub.name.startswith("."):
+            layers.append((sub.name, _iter_skill_md(sub)))
+    return layers
+
+
 @lru_cache(maxsize=1)
 def _catalog() -> dict[str, Skill]:
-    """name → Skill. Priority: workspace > agents > native > reasonix > addy."""
+    """name → Skill. Priority: workspace > agents > native > reasonix > vendor/*."""
     pkg = _skills_pkg_root()
     layers: list[tuple[str, list[Path]]] = [
-        ("addy", _iter_skill_md(pkg / "vendor" / "addy")),
+        *_vendor_layers(pkg),
         ("reasonix", _iter_skill_md(pkg / "reasonix")),
         ("native", _iter_skill_md(pkg / "native")),
         ("agent", _iter_skill_md(pkg / "agents")),
@@ -227,14 +271,22 @@ def get_skill(name: str) -> Skill | None:
     return _catalog().get(resolve_skill_name(name) or "")
 
 
+_SKILL_ALIASES = {
+    "vercel-react-best-practices": "react-best-practices",
+    "a11y": "accessibility",
+}
+
+
 def resolve_skill_name(name: str) -> str | None:
     key = (name or "").strip().lstrip("@").lower()
     if not key or key in _PIPELINE_TAGS:
         return None
+    key = _SKILL_ALIASES.get(key, key)
     if key in _catalog():
         return key
     # allow underscore/hyphen swap
     alt = key.replace("_", "-")
+    alt = _SKILL_ALIASES.get(alt, alt)
     if alt in _catalog():
         return alt
     return None
@@ -259,7 +311,11 @@ def format_skills_index(*, agent: str | None = None, max_desc: int = _DESC_INDEX
         desc = s.description.replace("\n", " ").strip()
         if len(desc) > max_desc:
             desc = desc[: max_desc - 1] + "…"
-        tag = f" [{s.source}]" if s.source in ("reasonix", "addy", "native") else ""
+        tag = (
+            f" [{s.source}]"
+            if s.source in ("reasonix", "addy", "native", "anthropic", "vercel", "web-quality")
+            else ""
+        )
         lines.append(f"- {s.name}{tag} — {desc}")
     lines.append("```")
     return "\n".join(lines)
@@ -349,6 +405,14 @@ def _is_playbook(sk: Skill) -> bool:
     return True
 
 
+def _skill_ok_for_assignee(sk: Skill, assignee: str) -> bool:
+    if not sk or not _is_playbook(sk):
+        return False
+    if assignee and sk.agents and assignee.lower() not in sk.agents:
+        return False
+    return True
+
+
 def match_skills_for_task(
     *,
     title: str = "",
@@ -357,37 +421,44 @@ def match_skills_for_task(
     assignee: str = "",
     max_skills: int = _MAX_AUTO,
 ) -> list[Skill]:
-    """Explicit tags first, then native heuristics. Cap max_skills."""
+    """Tags → web-FE defaults → heuristics. Cap max_skills (mặc định 3)."""
     chosen: list[Skill] = []
     seen: set[str] = set()
+    ag = (assignee or "").lower()
+
+    def _try_add(name: str) -> bool:
+        if name in seen or len(chosen) >= max_skills:
+            return False
+        sk = get_skill(name)
+        if not sk or not _skill_ok_for_assignee(sk, ag):
+            return False
+        chosen.append(sk)
+        seen.add(name)
+        return True
 
     for raw in tags or []:
         key = resolve_skill_name(str(raw))
-        if not key or key in seen:
-            continue
-        sk = get_skill(key)
-        if not sk or not _is_playbook(sk):
-            continue
-        if assignee and sk.agents and assignee.lower() not in sk.agents:
-            continue
-        chosen.append(sk)
-        seen.add(key)
+        if key:
+            _try_add(key)
         if len(chosen) >= max_skills:
             return chosen
 
     blob = f"{title}\n{description}"
+
+    # Dựng web/FE → tự gắn skill chất lượng (design + React; QA thêm a11y)
+    if _WEB_FE_CONTEXT.search(blob):
+        defaults = _WEB_FE_DEFAULTS_QA if ag in ("heiji", "haibara") else _WEB_FE_DEFAULTS_BUILD
+        for name in defaults:
+            _try_add(name)
+            if len(chosen) >= max_skills:
+                return chosen
+
     for name, pat in _NATIVE_HEURISTICS:
         if name in seen:
             continue
         if not pat.search(blob):
             continue
-        sk = get_skill(name)
-        if not sk or not _is_playbook(sk):
-            continue
-        if assignee and sk.agents and assignee.lower() not in sk.agents:
-            continue
-        chosen.append(sk)
-        seen.add(name)
+        _try_add(name)
         if len(chosen) >= max_skills:
             break
     return chosen

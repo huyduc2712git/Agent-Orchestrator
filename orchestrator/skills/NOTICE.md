@@ -16,3 +16,18 @@ Not affiliated with Reasonix; Detective personas remain Orchestrator-owned.
 Source: https://github.com/addyosmani/agent-skills
 Vendored under `vendor/addy/` — see `vendor/addy/LICENSE`.
 Skills are loaded on-demand via `run_skill`; bodies are not injected into every request.
+
+## anthropics/skills — frontend-design
+Source: https://github.com/anthropics/skills/tree/main/skills/frontend-design
+Vendored under `vendor/anthropic/frontend-design/` — see `LICENSE.txt` in that folder.
+Adapted frontmatter for Orchestrator tools (`screenshot_url`, `inspect_render`, …).
+
+## vercel-labs/agent-skills — react-best-practices (MIT)
+Source: https://github.com/vercel-labs/agent-skills/tree/main/skills/react-best-practices
+Vendored under `vendor/vercel/react-best-practices/` (includes `rules/` + `AGENTS.md`).
+Catalog name: `react-best-practices` (alias `vercel-react-best-practices`).
+
+## addyosmani/web-quality-skills — accessibility (MIT)
+Source: https://github.com/addyosmani/web-quality-skills/tree/main/skills/accessibility
+Vendored under `vendor/web-quality/accessibility/` — see `vendor/web-quality/LICENSE`.
+Alias: `a11y`.

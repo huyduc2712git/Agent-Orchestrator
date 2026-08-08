@@ -1,6 +1,7 @@
 /* Agent Orchestrator — Main Application Entry Point */
 
 import { state, $, updateFooterProject, taskElapsed } from "./state.js";
+import { playTing, toggleSound, isSoundEnabled } from "./sound.js";
 import { loadBoard, loadProjects, blockTask, selectProject } from "./api.js";
 import { renderBoard } from "./components/board.js";
 import { renderSidebar, switchView, goChat, notifyTab } from "./components/sidebar.js";
@@ -14,6 +15,8 @@ window.selectProject = selectProject;
 window.switchView = switchView;
 window.openModal = openModal;
 window.openSettingsModal = openSettingsModal;
+window.playTing = playTing;
+window.toggleSound = toggleSound;
 
 function connectWS() {
   const protocol = location.protocol === "https:" ? "wss:" : "ws:";
@@ -34,8 +37,24 @@ function connectWS() {
       if (type === "chat" || type === "chat_message") {
         appendChatMessage(ev.message);
         notifyTab("chat");
+        // Ting khi có thông báo hoàn thành hoặc bot báo xong
+        const text = ev.message?.text || "";
+        if (text.includes("✅") || text.includes("hoàn thành") || text.includes("đã xong") || text.includes("PASS")) {
+          playTing("chat_complete");
+        }
       } else if (type === "task_updated" || type === "task_created" || type === "board_reload") {
-        if (ev.task) state.tasks.set(ev.task.id, ev.task);
+        if (ev.task) {
+          const prev = state.tasks.get(ev.task.id);
+          // Phát ting khi subtask hoặc task cha hoàn thành (status chuyển sang done hoặc testing hoàn tất bước)
+          if (prev && prev.status !== ev.task.status) {
+            if (ev.task.status === "done" || (ev.task.parent_id && (ev.task.status === "done" || ev.task.status === "testing"))) {
+              playTing("task_complete");
+            }
+          } else if (!prev && ev.task.status === "done") {
+            playTing("task_done");
+          }
+          state.tasks.set(ev.task.id, ev.task);
+        }
         loadBoard();
         notifyTab("board");
         if (state.openTaskId === ev.task?.id) openModal(ev.task.id);
@@ -43,6 +62,10 @@ function connectWS() {
         if (state.openTaskId === ev.event?.task_id && shouldShowEvent(ev.event)) {
           const node = renderEvent(ev.event);
           if (node) $("modal-events")?.appendChild(node);
+        }
+        const evText = ev.event?.text || "";
+        if (ev.event?.kind === "status" && (evText.includes("done") || evText.includes("PASS") || evText.includes("hoàn thành"))) {
+          playTing("event_complete");
         }
         loadBoard();
       } else if (type === "thinking") {
@@ -117,6 +140,7 @@ function initEvents() {
   // Quick Action Buttons
   $("btn-new-task-2")?.addEventListener("click", goChat);
   $("btn-orchestrator")?.addEventListener("click", goChat);
+  $("bell-btn")?.addEventListener("click", () => toggleSound());
   $("btn-new-project")?.addEventListener("click", () => openNewProject());
   $("project-close")?.addEventListener("click", () => $("project-backdrop")?.classList.add("hidden"));
   $("project-backdrop")?.addEventListener("click", (e) => {

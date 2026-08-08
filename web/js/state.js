@@ -144,7 +144,7 @@ export function pillFor(t, meta) {
   if (t.status === "in_progress") return { cls: "pill-working", text: "In Progress" };
   if (t.status === "blocked" && t.type === "bug") return { cls: "pill-failed", text: "CI Failed" };
   if (t.status === "failed") return { cls: "pill-failed", text: "Failed" };
-  if (t.status === "blocked") return { cls: "pill-changes", text: "Needs Attention" };
+  if (t.status === "blocked") return { cls: "pill-changes", text: "Needs input" };
   if (t.status === "testing") return { cls: "pill-testing", text: "QA Testing" };
   if (t.status === "review") return { cls: "pill-review", text: "In Review" };
   if (t.status === "done") return { cls: "pill-ready", text: "Done" };

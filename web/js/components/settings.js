@@ -81,16 +81,23 @@ async function loadAndRenderSkillsCatalog() {
     const res = await fetch(`${API_BASE}/api/skills`);
     const data = await res.json();
     const by = data.by_source || {};
-    const order = ["agent", "native", "reasonix", "addy", "workspace"];
+    const order = [
+      "agent", "native", "reasonix", "addy", "anthropic", "vercel", "web-quality", "workspace",
+    ];
     const labels = {
       agent: "Agent profiles (subagent system prompts)",
       native: "Native (Orchestrator)",
       reasonix: "Reasonix builtins (adapted)",
       addy: "addyosmani/agent-skills",
+      anthropic: "anthropics/skills",
+      vercel: "vercel-labs/agent-skills",
+      "web-quality": "addyosmani/web-quality-skills",
       workspace: "Workspace overrides",
     };
     let html = "";
-    for (const src of order) {
+    const seenSrc = new Set(order);
+    const sources = [...order, ...Object.keys(by).filter((s) => !seenSrc.has(s))];
+    for (const src of sources) {
       const list = by[src] || [];
       if (!list.length) continue;
       html += `<div class="skills-group"><div class="panel-title">${escapeHtml(labels[src] || src)} (${list.length})</div>`;

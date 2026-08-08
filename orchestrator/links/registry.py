@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 from .base import LinkParser
+from .git_intent import apply_git_intent
 from .parsers import (
     FigmaParser,
     GitHubParser,
@@ -54,7 +55,8 @@ class LinkRegistry:
                     parsed["tags"] = parser.tags(parsed)
                     break
             results.append(parsed)
-        return results
+        # Phân biệt clone workspace vs nguồn API/tham chiếu theo câu user
+        return apply_git_intent(text, results)
 
     def first_of_type(self, text: str, *types: str) -> dict[str, Any] | None:
         for item in self.detect_all(text):
@@ -69,7 +71,19 @@ class LinkRegistry:
         lines = ["Link đã phát hiện (bắt buộc đưa nguyên văn vào description subtask liên quan):"]
         for link in links:
             t = link.get("type")
-            lines.append(f"- [{t}] {link.get('url')}")
+            intent = link.get("git_intent") or ""
+            intent_note = ""
+            if t in ("github", "gitlab"):
+                if intent == "reference_source":
+                    intent_note = (
+                        " — INTENT: NGUỒN API/THAM CHIẾU (KHÔNG clone đè project; "
+                        "giữ FE hiện có; git_clone vào thư mục con nếu cần)"
+                    )
+                else:
+                    intent_note = " — INTENT: clone workspace vào project dir"
+            ref = link.get("ref")
+            ref_note = f" ref=`{ref}`" if ref else ""
+            lines.append(f"- [{t}] {link.get('url')}{ref_note}{intent_note}")
             if link.get("steer_build"):
                 lines.append(f"  Build: {link['steer_build']}")
             if link.get("steer_qa"):

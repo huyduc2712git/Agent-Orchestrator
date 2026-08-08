@@ -10,10 +10,15 @@ from .base import LinkParser
 _URL_IN_TEXT = re.compile(r"https?://[^\s<>\"')\]]+", re.IGNORECASE)
 
 
+def _strip_url_junk(url: str) -> str:
+    """Bỏ dấu câu / quote dính cuối URL (vd. ..., \"...\" )."""
+    return (url or "").strip().rstrip(".,;:!?)]}'\"»")
+
+
 def extract_raw_urls(text: str) -> list[str]:
     if not text:
         return []
-    found = _URL_IN_TEXT.findall(text)
+    found = [_strip_url_junk(u) for u in _URL_IN_TEXT.findall(text)]
     # cũng bắt dạng github.com/... không có scheme
     bare = re.findall(
         r"(?:(?<=\s)|^)((?:www\.)?(?:github\.com|gitlab\.com|figma\.com|atlassian\.net)/[^\s<>\"')\]]+)",
@@ -21,10 +26,10 @@ def extract_raw_urls(text: str) -> list[str]:
         re.IGNORECASE,
     )
     for b in bare:
-        u = b if b.startswith("http") else f"https://{b}"
-        if u not in found:
+        u = _strip_url_junk(b if b.startswith("http") else f"https://{b}")
+        if u and u not in found:
             found.append(u)
-    return found
+    return [u for u in found if u]
 
 
 class GitHubParser(LinkParser):
@@ -37,24 +42,34 @@ class GitHubParser(LinkParser):
         return bool(re.search(r"github\.com/[\w.-]+/[\w.-]+", u))
 
     def parse(self, url: str) -> dict[str, Any]:
+        from .git_intent import extract_git_ref
+
         m = re.search(r"github\.com/([\w.-]+)/([\w.-]+)", url, re.I)
         owner = m.group(1) if m else ""
         repo = (m.group(2) if m else "").removesuffix(".git")
         clone = f"https://github.com/{owner}/{repo}.git" if owner and repo else ""
-        return {
+        full = url if url.startswith("http") else f"https://github.com/{owner}/{repo}"
+        ref = extract_git_ref(full)
+        out: dict[str, Any] = {
             "type": "github",
-            "url": url if url.startswith("http") else f"https://github.com/{owner}/{repo}",
+            "url": full,
             "host": "github.com",
             "owner": owner,
             "repo": repo,
             "clone_url": clone,
             "path": f"{owner}/{repo}" if owner and repo else "",
         }
+        if ref:
+            out["ref"] = ref
+        return out
 
     def steer_build(self, parsed: dict[str, Any]) -> str:
         link = parsed.get("url") or parsed.get("clone_url")
+        ref = parsed.get("ref") or ""
+        ref_note = f" (ref `{ref}`)" if ref else ""
         return (
-            f"Repo GitHub: {link}. Hệ thống đã/ sẽ clone vào project dir. "
+            f"Repo GitHub: {link}{ref_note}. Hệ thống đã/ sẽ clone vào project dir"
+            f"{' @ ' + ref if ref else ''}. "
             "Dùng git_status xác nhận remote/branch; code TRÊN repo (không tạo tree song song). "
             "PIPELINE BẮT BUỘC trước khi bàn giao: (1) npm/bun install nếu có package.json; "
             "(2) build FE nếu Vite/React; (3) start backend/API nếu có (Express/server.ts/scripts.start) "
@@ -65,8 +80,10 @@ class GitHubParser(LinkParser):
         )
 
     def steer_qa(self, parsed: dict[str, Any]) -> str:
+        ref = parsed.get("ref") or ""
+        ref_note = f" @ `{ref}`" if ref else ""
         return (
-            f"Repo: {parsed.get('clone_url') or parsed.get('url')}. "
+            f"Repo: {parsed.get('clone_url') or parsed.get('url')}{ref_note}. "
             "Verify trên codebase đã clone. Smoke BẮT BUỘC: Live URL UI 200 + "
             "API direct (:3000/health…) + API SAME-ORIGIN trên host Live URL (/api/...). "
             "Grep fetch('/api/') trong src. Chỉ UI/direct OK mà same-origin 404 → VERDICT: FAIL "

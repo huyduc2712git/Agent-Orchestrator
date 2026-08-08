@@ -97,7 +97,7 @@ HANDOFF_INTERVAL_SECONDS = 15
 def _build_worker_prompt(task: Task) -> str:
     parts = [f"TASK {task.id}: {task.title}", "", task.description or "(không có mô tả)"]
 
-    # Preload tối đa 2 skill bodies (tags + heuristic native) — Reasonix on-demand còn lại qua run_skill
+    # Preload skill bodies (tags + web-FE defaults + heuristics) — còn lại qua run_skill
     try:
         from ..skills.loader import format_skills_block, match_skills_for_task
         matched = match_skills_for_task(
@@ -105,7 +105,6 @@ def _build_worker_prompt(task: Task) -> str:
             description=task.description or "",
             tags=list(task.tags or []),
             assignee=task.assignee or "",
-            max_skills=2,
         )
         if matched:
             block = format_skills_block(matched)
@@ -204,7 +203,13 @@ def _build_worker_prompt(task: Task) -> str:
             "7. VERDICT: PASS hoặc VERDICT: FAIL — kèm evidence, không khẳng định suông.",
             *per_sub_lines,
         ]
-    if "git-repo" in (task.tags or []) or "github" in (task.tags or []) or "gitlab" in (task.tags or []):
+    tags = task.tags or []
+    api_source_be_first = (
+        "api-source" in tags
+        and task.assignee == "agasa"
+        and task.type != "bug"
+    )
+    if "git-repo" in tags or "github" in tags or "gitlab" in tags:
         parts += [
             "",
             "=== GIT WORKSPACE & COMMIT POLICY (NGHIÊM CẤM TỰ COMMIT/PUSH) ===",
@@ -216,23 +221,45 @@ def _build_worker_prompt(task: Task) -> str:
             "=== CLONE → RUN APP SMOKE (một tiến trình, bắt buộc) ===",
             "Clone chỉ là bước 0. Trước khi báo xong phải:",
             "A. install deps (npm/bun) nếu thiếu node_modules",
-            "B. build FE (vite/react) hoặc start FE dev — Live URL/UI http_get 200",
-            "C. nếu có backend (server.ts / express / api scripts): START server nền + http_get API/health OK",
-            "D. SAME-ORIGIN API: sau khi Live URL đã mở được, http_get "
-            f"{config.BASE_URL}/api/<path> (path FE dùng, vd /api/health hoặc /api/zing/...). "
-            "Backend :3000 OK mà Live host /api 404 = CHƯA XONG — phải fix proxy/api_base "
-            "hoặc create_bug_ticket ghi hướng fix, không bàn giao PASS giả.",
-            "E. deliverable ghi: Live URL UI + API direct URL + API same-origin URL + status từng cái",
         ]
+        if api_source_be_first:
+            parts += [
+                "B. (api-source / BE trước FE) KHÔNG bắt buộc scaffold/build FE ở bước này.",
+                "C. START API nền + http_get trực tiếp port API (vd :4010/:3000) OK — đó là done của sub BE.",
+                "D. SAME-ORIGIN trên Live host "
+                f"({config.BASE_URL}/api/...) chỉ làm SAU khi FE đã có và api_base đã set. "
+                "502 vì chưa cấu hình api_base / chưa có FE ≠ bug — ghi NOTE trong deliverable "
+                "(port API + đề xuất api_base), gọi save_start_command. "
+                "CẤM create_bug_ticket chỉ vì proxy Live host 502 khi chưa có FE.",
+                "E. deliverable: API direct URL + status + start command + port; same-origin để Kid làm sau.",
+            ]
+        else:
+            parts += [
+                "B. build FE (vite/react) hoặc start FE dev — Live URL/UI http_get 200",
+                "C. nếu có backend (server.ts / express / api scripts): START server nền + http_get API/health OK",
+                "D. SAME-ORIGIN API: sau khi Live URL đã mở được, http_get "
+                f"{config.BASE_URL}/api/<path> (path FE dùng, vd /api/health hoặc /api/zing/...). "
+                "Backend :3000 OK mà Live host /api 404 = CHƯA XONG — phải fix proxy/api_base "
+                "hoặc create_bug_ticket ghi hướng fix, không bàn giao PASS giả.",
+                "E. deliverable ghi: Live URL UI + API direct URL + API same-origin URL + status từng cái",
+            ]
 
     if task.assignee in ("kid", "agasa"):
-        parts += [
-            "",
-            "=== KHI PHÁT HIỆN LỖI (Kid/Agasa) ===",
-            "Không bỏ qua 4xx/5xx. Phải: (1) tái hiện bằng http_get, (2) chẩn đoán root cause ngắn, "
-            "(3) sửa nếu trong phạm vi task HOẶC create_bug_ticket với hướng fix cụ thể, "
-            "(4) post_message evidence. UI đẹp ≠ xong nếu API same-origin fail.",
-        ]
+        if api_source_be_first:
+            parts += [
+                "",
+                "=== KHI PHÁT HIỆN LỖI (Agasa api-source BE-first) ===",
+                "Lỗi trên port API trực tiếp (4xx/5xx không phải auth mock) → chẩn đoán/fix trong phạm vi. "
+                "Live host /api 502 vì chưa api_base hoặc FE chưa scaffold → NOTE, không create_bug_ticket.",
+            ]
+        else:
+            parts += [
+                "",
+                "=== KHI PHÁT HIỆN LỖI (Kid/Agasa) ===",
+                "Không bỏ qua 4xx/5xx. Phải: (1) tái hiện bằng http_get, (2) chẩn đoán root cause ngắn, "
+                "(3) sửa nếu trong phạm vi task HOẶC create_bug_ticket với hướng fix cụ thể, "
+                "(4) post_message evidence. UI đẹp ≠ xong nếu API same-origin fail.",
+            ]
 
     parts += [
         "",
@@ -392,11 +419,12 @@ def auto_recover_stuck_and_blocked_tasks() -> None:
         if not t:
             _in_flight.discard(tid)
             continue
-        # Ưu tiên mốc event/tool gần nhất (updated_at được touch mỗi tool)
-        stamp = store.last_event_at(tid) or t.updated_at
+        # Lấy mốc mới hơn giữa event cuối và updated_at (touch_task khi tool bắt đầu/xong).
+        # Trước đây chỉ dùng last_event_at → npm install dài bị coi là treo dù updated_at còn tươi.
+        stamps = [s for s in (store.last_event_at(tid), t.updated_at) if s]
         try:
-            updated_dt = datetime.fromisoformat(stamp)
-            age = (now_utc - updated_dt).total_seconds()
+            latest = max(datetime.fromisoformat(s) for s in stamps) if stamps else None
+            age = (now_utc - latest).total_seconds() if latest else 0
         except Exception:
             age = 0
         if age > STALE_IN_FLIGHT_SEC:
