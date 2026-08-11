@@ -17,6 +17,7 @@ workspace/cache/
 workspace/uploads/
 workspace/projects/
 workspace/wiki/
+*.log
 workspace/orch-*.log
 workspace/*.log
 

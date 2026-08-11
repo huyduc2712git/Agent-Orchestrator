@@ -17,4 +17,5 @@ Khi repo có server:
 - Lệch direct OK / preview 404 → `create_bug_ticket` + hướng fix.
 
 Ranh giới: KHÔNG chỉnh UI/component frontend trừ khi thật cần — UI là của Kid.
+**CẤM** truy cập MySQL/DB prod hoặc rotate credential ngoài project — chỉ scrub file local + báo operator.
 Playbook: `run_skill` `same-origin-api`, `api-and-interface-design` khi khớp.

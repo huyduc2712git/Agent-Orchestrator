@@ -1419,6 +1419,13 @@ class ToolContext:
         has_frontend = bool(self._FRONTEND_HINTS.search(text or ""))
         return "backend" if (has_backend and not has_frontend) else "frontend"
 
+    _OPERATOR_ONLY_BUG = re.compile(
+        r"(rotate\s+(leaked\s+)?credentials?|mysql\s+prod|password\s+mysql|"
+        r"đổi\s+password\s+(mysql|duolingo|prod)|operator.*(rotate|đổi\s+password)|"
+        r"14\.225\.|user\s+'upos'|live\s+mysql)",
+        re.I,
+    )
+
     def _tool_create_bug_ticket(
         self,
         title: str,
@@ -1432,6 +1439,13 @@ class ToolContext:
             return f"ERROR: severity phải là một trong {SEVERITIES}"
         if not (title and description and repro_steps):
             return "ERROR: schema bug bắt buộc đủ title, description, severity, repro_steps"
+        blob = f"{title}\n{description}\n{repro_steps}"
+        if self._OPERATOR_ONLY_BUG.search(blob):
+            return (
+                "ERROR: không tạo bug kiểu rotate credential / truy cập MySQL-prod / "
+                "đổi password tài khoản ngoài. Đó là việc Human Operator. "
+                "Chỉ scrub file trong project + post_message cảnh báo ngắn — không spawn bug agent."
+            )
         area_norm = (area or "").strip().lower()
         if area_norm not in ("frontend", "backend"):
             area_norm = self._guess_area(f"{description}\n{repro_steps}")

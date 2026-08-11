@@ -2083,8 +2083,14 @@ async def _closure(parent: Task, subtasks: list[Task]) -> None:
         parent = store.get_task(parent.id) or parent
         if parent.status in ("done", "archived"):
             return
+        # APPROVED rồi nhưng crash/reload trước khi set done → chỉ finalize, không verify lại
         if _conan_final_already_approved(parent.id):
-            log.info("%s: Conan đã Final Review APPROVED — bỏ qua verify lại", parent.id)
+            log.info(
+                "%s: Conan đã Final Review APPROVED — bỏ qua verify, hoàn tất đóng task",
+                parent.id,
+            )
+            subtasks = store.list_tasks(parent_id=parent.id)
+            await _finalize_after_approved(parent, subtasks, summary="")
             return
         subtasks = store.list_tasks(parent_id=parent.id)
         await _closure_unlocked(parent, subtasks)
@@ -2300,8 +2306,11 @@ async def _closure_unlocked(parent: Task, subtasks: list[Task]) -> None:
     # Conan Final Review (sau QA PASS; Security/Pentest nếu không skip)
     # Re-check: Amuro vừa PASS có thể kích hoạt nhiều check_parent_progress cùng lúc
     parent = store.get_task(parent.id) or parent
-    if parent.status in ("done", "archived") or _conan_final_already_approved(parent.id):
-        log.info("%s: bỏ qua Final Review — đã APPROVED/done", parent.id)
+    if parent.status in ("done", "archived"):
+        return
+    if _conan_final_already_approved(parent.id):
+        log.info("%s: bỏ qua Final Review — đã APPROVED, chuyển finalize", parent.id)
+        await _finalize_after_approved(parent, subtasks, summary="")
         return
 
     conan = AGENTS["conan"]
@@ -2413,35 +2422,71 @@ async def _closure_unlocked(parent: Task, subtasks: list[Task]) -> None:
                 pass
         return
 
-    # APPROVED — đóng mọi sub/bug còn mở (kể cả in_progress — không để Amuro chạy mồ côi)
-    for t in subtasks:
+    await _finalize_after_approved(parent, subtasks, summary=result or phase5_msg)
+
+
+async def _finalize_after_approved(
+    parent: Task,
+    subtasks: list[Task],
+    *,
+    summary: str = "",
+) -> None:
+    """Đóng sub/bug + parent sau Final Review APPROVED (idempotent khi reload giữa chừng)."""
+    parent = store.get_task(parent.id) or parent
+    if parent.status in ("done", "archived"):
+        return
+
+    preview_url = f"{config.BASE_URL}/preview/{parent.project}/"
+    children = list(subtasks) or store.list_tasks(parent_id=parent.id)
+    for t in children:
         if t.status not in ("done", "archived"):
             store.force_close_task(t.id, "conan")
     for b in store.list_tasks(parent_id=parent.id, type="bug"):
         if b.status not in ("done", "archived"):
             store.force_close_task(b.id, "conan")
 
-    # Tự động dọn .bak/.tmp trong project (artifacts dọn khi task → done/archived)
     _cleanup_temp_bak_files(parent)
 
+    # Lấy tóm tắt từ comment Phase 5 nếu thiếu (crash sau APPROVED)
+    text = (summary or "").strip()
+    if not text:
+        for e in reversed(store.list_events(parent.id)[-30:]):
+            if e.agent == "conan" and e.kind == "comment" and _is_phase5_final_review(e.message or "", parent.id):
+                text = e.message or ""
+                break
+
     if parent.review_type == "operator":
-        store.set_status(parent.id, "testing", "conan")
-        store.set_status(parent.id, "review", "conan")
+        cur = store.get_task(parent.id) or parent
+        if cur.status not in ("review", "done", "archived"):
+            if cur.status != "testing":
+                try:
+                    store.set_status(parent.id, "testing", "conan")
+                except Exception:
+                    pass
+            store.set_status(parent.id, "review", "conan")
         store.add_chat(
             "conan",
             f"{parent.id} QA PASS + Final Review APPROVED, chờ operator Approve.\n"
             f"🔗 {preview_url}",
         )
     else:
-        store.set_status(parent.id, "testing", "conan")
-        store.set_status(parent.id, "done", "conan")
+        cur = store.get_task(parent.id) or parent
+        if cur.status != "done":
+            if cur.status != "testing":
+                try:
+                    store.set_status(parent.id, "testing", "conan")
+                except Exception:
+                    pass
+            store.set_status(parent.id, "done", "conan")
         store.add_chat(
             "conan",
             f"Hoàn tất {parent.id} — {parent.title}.\n"
-            f"🔗 Live URL: {preview_url}\n\n" + "\n".join(result.strip().splitlines()[:8])[:800],
+            f"🔗 Live URL: {preview_url}\n\n"
+            + "\n".join(text.strip().splitlines()[:8])[:800],
         )
 
-    await _phase6_memorize(parent, result)
+    parent = store.get_task(parent.id) or parent
+    await _phase6_memorize(parent, text or parent.title)
 
 def _cleanup_temp_bak_files(parent: Task) -> None:
     """Tự động dọn dẹp các file rác .bak, .tmp, test-script tạm tạo trong quá trình agent debug/fix bug."""

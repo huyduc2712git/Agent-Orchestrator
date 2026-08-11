@@ -390,10 +390,12 @@ body.sidebar-collapsed .sidebar-settings {
 .board-focus-task {
   display: none;
 }
-.board-focus-pill {
+/* Selector mạnh hơn .pill { padding:0 } — Idle/status ở board header cần padding 2 bên */
+.board-focus-pill,
+.board-focus-pill.pill {
   flex-shrink: 0;
   margin-left: 4px;
-  padding: 3px 12px !important;
+  padding: 2px 8px !important;
   border-radius: 999px !important;
   font-size: 0.78rem !important;
   font-weight: 700 !important;
@@ -404,6 +406,7 @@ body.sidebar-collapsed .sidebar-settings {
   white-space: nowrap !important;
   letter-spacing: -0.01em;
   transition: all 0.2s ease;
+  box-sizing: border-box;
 }
 .board-focus-pill .pill-dot {
   width: 7px !important;
