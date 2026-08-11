@@ -27,7 +27,8 @@ def _err(req_id: Any, code: int, message: str) -> dict[str, Any]:
 def _handle_rpc(msg: dict[str, Any]) -> dict[str, Any] | None:
     method = msg.get("method") or ""
     req_id = msg.get("id")
-    params = msg.get("params") if isinstance(msg.get("params"), dict) else {}
+    raw_params = msg.get("params")
+    params: dict[str, Any] = raw_params if isinstance(raw_params, dict) else {}
 
     if method == "initialize":
         return _ok(req_id, {

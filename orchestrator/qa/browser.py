@@ -75,7 +75,8 @@ def _launch_page(url: str, viewport: dict[str, int], wait_ms: int = 1500):
 
     pw = sync_playwright().start()
     browser = pw.chromium.launch(headless=True)
-    page = browser.new_page(viewport=viewport)
+    vp = {"width": int(viewport.get("width", 1280)), "height": int(viewport.get("height", 800))}
+    page = browser.new_page(viewport=vp)  # type: ignore[arg-type]
     console_errors: list[str] = []
     page.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
     page.on("pageerror", lambda err: console_errors.append(str(err)))
@@ -309,8 +310,8 @@ def compare_images(path_a: Path, path_b: Path, *, threshold: float = 0.92) -> di
     if img_a.size != img_b.size:
         img_b = img_b.resize(img_a.size, Image.Resampling.LANCZOS)
 
-    pixels_a = list(img_a.getdata())
-    pixels_b = list(img_b.getdata())
+    pixels_a: list[Any] = [p for p in img_a.getdata()]  # type: ignore
+    pixels_b: list[Any] = [p for p in img_b.getdata()]  # type: ignore
     if len(pixels_a) != len(pixels_b):
         return {"ok": False, "error": "kích thước ảnh không khớp sau resize"}
 

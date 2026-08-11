@@ -611,7 +611,9 @@ async def analyze_image_and_chat(
                 api_key=cfg["api_key"],
                 max_retries=2,
             )
-            description = (msg.get("content") or "").strip()
+            if asyncio.iscoroutine(msg):
+                msg = await msg
+            description = (msg.get("content") or "").strip() if isinstance(msg, dict) else str(msg or "").strip()
             if description:
                 used_model = cfg.get("name") or cfg["model"]
                 break

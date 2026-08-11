@@ -1,0 +1,13 @@
+{
+  "venvPath": ".",
+  "venv": ".venv",
+  "include": [
+    "orchestrator",
+    "tests",
+    "scripts",
+    "web"
+  ],
+  "extraPaths": [
+    "."
+  ]
+}

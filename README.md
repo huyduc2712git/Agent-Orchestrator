@@ -1,82 +1,71 @@
-# AI Orchestrator (kiểu Jarvis)
+# AI Orchestrator
 
-Hệ thống multi-agent hiện thực hóa bản thiết kế trong [docs/design.md](docs/design.md):
-Jarvis (orchestrator) nhận task qua chat, phân tích và chia subtask có dependency, giao cho
+Hệ thống multi-agent hiện thực hóa quy trình điều phối dự án thông minh:
+**Conan** (orchestrator) nhận task qua chat, phân tích và chia subtask có dependency, giao cho
 các agent chuyên môn **thực thi thật** trên máy (đọc/ghi file, chạy lệnh), QA có bằng chứng,
-review gate, và ghi nhớ bài học vào memory/wiki.
+review gate bảo mật (Akai/Amuro), và ghi nhớ bài học vào memory/wiki.
 
-## Đội hình agent
+## Đội hình Agent
 
-| Agent | Vai trò |
-|---|---|
-| **Jarvis** | Orchestrator — lập kế hoạch, verify độc lập, đóng task. Không code. |
-| **Stark** | Builder — UI/frontend, viết code chính |
-| **Banner** | Backend — API, data, script |
-| **Hawkeye** | QA — verify từng acceptance criteria, tạo bug ticket. Không sửa code. |
-| **Pepper** | Manager — tổng hợp báo cáo |
+| Agent | Vai trò | Chuyên môn |
+|---|---|---|
+| **Conan** | Orchestrator / Planner | Lập kế hoạch, điều phối subtask, review độc lập, đóng task. Không code. |
+| **Kaito Kid** | Frontend Builder | UI/UX, ảo thuật thị giác, scaffolding, viết code giao diện chính. |
+| **Agasa** | Backend Specialist | API, logic server, data, script backend, gadget công nghệ. |
+| **Heiji** | Visual QA | Quan sát sắc bén, chụp màn hình live, so sánh Figma spec, kiểm tra CSS. |
+| **Ai Haibara** | Quality Reviewer | Cẩn trọng, logic, tổng hợp báo cáo QA Complete, đánh giá rủi ro. |
+| **Shuichi Akai** | Security Reviewer | Rà soát bảo mật mã nguồn, auth/authz, SQLi, XSS, CVE dependency. |
+| **Rei Furuya (Amuro)** | Penetration Tester | Thử nghiệm tấn công pentest trên preview/staging, kiểm thử hạ tầng. |
 
-## Chạy
+## Cài đặt & Khởi chạy
+
+Dự án sử dụng môi trường ảo `.venv`:
 
 ```powershell
-pip install -r requirements.txt
+# 1. Kích hoạt môi trường ảo:
+.\.venv\Scripts\Activate.ps1
 python -m orchestrator.main
+
+# Hoặc chạy trực tiếp qua Python trong .venv:
+.\.venv\Scripts\python.exe -m orchestrator.main
 ```
 
-Mở http://127.0.0.1:8600 — chat với Jarvis bên trái, Kanban board realtime bên phải.
+Mở giao diện tại: http://127.0.0.1:8600 (Chat điều phối bên trái, Kanban realtime bên phải).
 
-Cấu hình trong `.env`: `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY` (endpoint OpenAI-compatible
-bất kỳ), `HOST`, `PORT`.
+Cấu hình trong `.env` hoặc trên UI: `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY`, `HOST`, `PORT`.
 
-## Luồng vận hành (6 phase)
+## Luồng Vận Hành (6 Phase)
 
-1. **Tiếp nhận** — chat gửi vào `/api/chat`, Jarvis đọc memory + wiki + board trước khi quyết định.
-2. **Phân tích & lập kế hoạch** — trả lời ngay; task phức tạp được chia subtask chain có
-   dependency, luôn kèm subtask QA cuối gán Hawkeye với acceptance criteria cụ thể.
-3. **Phân công** — scheduler tự chạy subtask khi dependency đã xong (`blocks` dep thỏa mãn
-   khi task nguồn đạt `testing`+).
-4. **Theo dõi** — event bus đẩy realtime qua WebSocket; Board Patrol quét định kỳ, gom
-   task blocked/review/stale thành 1 digest, không spam.
-5. **Kiểm tra & hoàn tất** — Hawkeye verify từng criteria và tạo bug ticket (schema bắt buộc,
-   search chống trùng, link `related`); bug mở được giao fix round; Pepper tổng hợp;
-   Jarvis **verify độc lập** bằng tool thật rồi mới đóng.
-6. **Ghi nhớ** — cập nhật `workspace/memory/MEMORY.md` + `workspace/wiki/features/`.
+1. **Tiếp nhận** — Chat gửi vào `/api/chat`, Conan đọc memory + wiki + board trước khi lập kế hoạch.
+2. **Phân tích & Lập kế hoạch** — Task phức tạp được chia subtask chain có dependency, luôn kèm subtask QA (Heiji) với acceptance criteria rõ ràng.
+3. **Phân công & Thực thi** — Scheduler tự động chạy worker khi dependency đã thỏa mãn (`blocks` thỏa mãn khi task nguồn đạt `testing`+).
+4. **Theo dõi** — Event bus WebSocket realtime; Board Patrol tự động quét phát hiện task stale / blocked.
+5. **Kiểm tra & Review Gate** — Heiji kiểm tra giao diện/API -> Akai rà soát bảo mật -> Amuro thử pentest -> Conan Final Review.
+6. **Ghi nhớ** — Cập nhật `workspace/memory/MEMORY.md` và `workspace/wiki/`.
 
-## Nguyên tắc được enforce ở tầng hệ thống
+## Kiểm Thử (Tests)
 
-- Mọi thay đổi status đi qua transition guard ([orchestrator/board/state_machine.py](orchestrator/board/state_machine.py)):
-  - Agent set `review` trên task agent-only → tự normalize về `testing` kèm giải thích.
-  - Task gắn tag `db-migration` / `security` / `deploy-prod` → bắt buộc **operator review**,
-    chỉ người thật bấm Approve trên UI mới đóng được.
-  - Agent không tự đóng task mình làm; Jarvis không approve việc của chính Jarvis.
-- Agent bị giới hạn trong project directory của task (path sandbox), lệnh có timeout.
-
-## Kiểm thử
-
-Offline (không cần API key) — chạy trước khi coi luồng ổn:
+Các bài test được thiết kế cô lập hoàn toàn (sử dụng database và workspace tạm, **không tạo project rác trong `workspace/projects/` và không làm ô nhiễm `workspace/board.db`**).
 
 ```powershell
-python scripts/test_board.py
-python scripts/test_json_repair.py
-python scripts/test_link_registry.py
-python scripts/test_git.py
-python scripts/test_agent_consistency.py
-python scripts/test_prompt_tool_consistency.py
-python scripts/test_security_pipeline.py
-python scripts/test_heiji_checklist_coverage.py
+# Chạy toàn bộ test suite:
+.\.venv\Scripts\python.exe scripts\run_all_tests.py
+
+# Hoặc chạy riêng từng test:
+.\.venv\Scripts\python.exe tests\test_tools.py
 ```
 
-Có API key — smoke LLM + agent tool loop:
+## Cấu Trúc Dự Án
 
-```powershell
-python scripts/test_llm.py
-python scripts/test_runtime.py
-```
-
-## Cấu trúc
-
-- `orchestrator/board/` — SQLite store, models, state machine
-- `orchestrator/agents/` — registry persona, runtime tool-calling, bộ tool
-- `orchestrator/core/` — orchestrator 6 phase, scheduler, board patrol
-- `orchestrator/memory/` — MEMORY.md + wiki store
-- `web/` — UI chat + Kanban
-- `workspace/` — dữ liệu runtime (board.db, memory, wiki, projects)
+- `orchestrator/agents/` — Registry persona, runtime tool-calling, bộ tools
+- `orchestrator/board/` — SQLite store, models, state machine guards, review cards
+- `orchestrator/core/` — Orchestrator 6 phase, scheduler worker loop, patrol, handoff
+- `orchestrator/links/` — Bộ parser và registry liên kết (Git, Figma, Jira)
+- `orchestrator/mcp/` — MCP client & Figma shim
+- `orchestrator/memory/` — Persistent memory store & wiki
+- `orchestrator/qa/` — Playwright browser inspector & Visual QA
+- `orchestrator/routes/` — FastAPI endpoints (chat, board, projects, preview, settings)
+- `orchestrator/skills/` — Reasonix skill playbooks & agent prompts
+- `tests/` — Bộ test suite chuẩn (unit, integration, state machine, safety)
+- `web/` — Giao diện web UI (HTML, CSS, JS modular)
+- `workspace/` — Dữ liệu runtime (board.db, settings.json, memory, wiki)

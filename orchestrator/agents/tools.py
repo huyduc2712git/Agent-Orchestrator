@@ -667,7 +667,7 @@ class ToolContext:
                 try:
                     rel = child.relative_to(self.project_dir)
                 except ValueError:
-                    rel = child.name
+                    rel = Path(child.name)
                 if child.is_dir():
                     lines.append(f"{rel.as_posix()}/")
                 else:

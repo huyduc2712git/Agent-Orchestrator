@@ -520,7 +520,8 @@ def auto_recover_stuck_and_blocked_tasks() -> None:
                         # về testing rồi done (state machine không cho blocked→done trực tiếp)
                         if st.status in ("blocked", "failed"):
                             store.set_status(st.id, "backlog", "conan")
-                        if store.get_task(st.id).status == "backlog":
+                        cur = store.get_task(st.id)
+                        if cur and cur.status == "backlog":
                             store.set_status(st.id, "in_progress", "conan")
                         cur = store.get_task(st.id)
                         if cur and cur.status == "in_progress":

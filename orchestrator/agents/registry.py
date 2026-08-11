@@ -110,7 +110,7 @@ AGENTS: dict[str, Agent] = {
         role="critic",
         tools=[
             "read_file", "list_dir", "ls", "glob", "grep", "search_files",
-            "run_command", "bash", "http_get", "web_fetch",
+            "http_get", "web_fetch",
             "todo_write", "run_skill", "search_tasks", "post_message", "create_bug_ticket",
         ],
         persona_fallback="Bạn là Shuichi Akai — security reviewer. Không code.",
