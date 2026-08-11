@@ -173,21 +173,64 @@ async def get_artifact(task_id: str, filename: str):
             media_type="image/svg+xml",
             headers={"Cache-Control": "no-cache", "X-Artifact-Missing": "1"},
         )
-    path = (config.ARTIFACTS_DIR / task_id / filename).resolve()
-    if not str(path).startswith(str(config.ARTIFACTS_DIR.resolve())):
-        return Response(
-            content=_MISSING_UPLOAD_SVG.encode("utf-8"),
-            media_type="image/svg+xml",
-            headers={"Cache-Control": "no-cache", "X-Artifact-Missing": "1"},
-        )
-    if not path.is_file():
-        # File đã dọn sau done (cũ) hoặc chưa chụp — tránh 404 vỡ <img> trên board
-        return Response(
-            content=_MISSING_UPLOAD_SVG.encode("utf-8"),
-            media_type="image/svg+xml",
-            headers={"Cache-Control": "no-cache", "X-Artifact-Missing": "1"},
-        )
-    return FileResponse(path)
+
+    root_dir = config.ARTIFACTS_DIR.resolve()
+    task_dir = (config.ARTIFACTS_DIR / task_id).resolve()
+
+    def _find_file_in_dir(target_dir: Path, fname: str) -> Path | None:
+        if not target_dir.is_dir():
+            return None
+        # 1. Trực tiếp
+        direct = (target_dir / fname).resolve()
+        if str(direct).startswith(str(root_dir)) and direct.is_file():
+            return direct
+        # 2. Biến thể tên phổ biến (e.g. diff_qa- -> diff_, qa- -> "")
+        candidates = [
+            fname.replace("diff_qa-", "diff_"),
+            fname.replace("diff_qa-home", "diff_desktop-home"),
+            fname.replace("diff_home", "diff_desktop-home"),
+            fname.replace("qa-", ""),
+            f"diff_{fname.removeprefix('diff_').removeprefix('qa-')}",
+        ]
+        # 3. Fuzzy match stem
+        stem = Path(fname).stem.replace("qa-", "").replace("diff_", "")
+        try:
+            for f in target_dir.iterdir():
+                if f.is_file() and (stem in f.name or f.stem.endswith(stem)):
+                    if fname.startswith("diff_") and not f.name.startswith("diff_"):
+                        continue
+                    candidates.append(f.name)
+        except OSError:
+            pass
+
+        for c in candidates:
+            cand_p = (target_dir / c).resolve()
+            if str(cand_p).startswith(str(root_dir)) and cand_p.is_file():
+                return cand_p
+        return None
+
+    # Tìm trong thư mục task
+    found = _find_file_in_dir(task_dir, filename)
+    if found:
+        return FileResponse(found)
+
+    # Nếu không thấy và task_id có subtasks, tìm trong các subtasks
+    try:
+        from .board import store
+        for st in store.list_tasks(parent_id=task_id):
+            st_dir = (config.ARTIFACTS_DIR / st.id).resolve()
+            found = _find_file_in_dir(st_dir, filename)
+            if found:
+                return FileResponse(found)
+    except Exception:
+        pass
+
+    # File không tồn tại -> fallback SVG
+    return Response(
+        content=_MISSING_UPLOAD_SVG.encode("utf-8"),
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "no-cache", "X-Artifact-Missing": "1"},
+    )
 
 
 @app.get("/uploads/{filename}")
