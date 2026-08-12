@@ -8,6 +8,7 @@ import { renderSidebar, switchView, goChat, notifyTab } from "./components/sideb
 import { openModal, openNewProject, setProjectCreateMode, renderEvent, shouldShowEvent } from "./components/modal.js";
 import { loadChat, sendChatMessage, resizeChatInput, resetChatInputHeight, appendChatMessage, renderChatMessage, setThinking, initChatImageAttach, handleChatMentionKeydown, loadSkillMentions } from "./components/chat.js";
 import { initSettingsEvents, openSettingsModal } from "./components/settings.js";
+import { initFlowCanvas, renderFlow } from "./components/flow.js";
 
 // Make key functions available globally for inline HTML events
 window.blockTask = blockTask;
@@ -17,6 +18,7 @@ window.openModal = openModal;
 window.openSettingsModal = openSettingsModal;
 window.playTing = playTing;
 window.toggleSound = toggleSound;
+window.renderFlow = renderFlow;
 
 function connectWS() {
   const protocol = location.protocol === "https:" ? "wss:" : "ws:";
@@ -56,6 +58,7 @@ function connectWS() {
           state.tasks.set(ev.task.id, ev.task);
         }
         loadBoard();
+        renderFlow();
         notifyTab("board");
         if (state.openTaskId === ev.task?.id) openModal(ev.task.id);
       } else if (type === "event") {
@@ -68,8 +71,10 @@ function connectWS() {
           playTing("event_complete");
         }
         loadBoard();
+        renderFlow();
       } else if (type === "thinking") {
         setThinking(ev.on);
+        renderFlow();
       }
     } catch (err) {
       console.error("WS error:", err);
@@ -265,6 +270,7 @@ function boot() {
   try {
     initEvents();
     initChatImageAttach();
+    initFlowCanvas();
     switchView("board");
     // Projects độc lập với board — tránh sidebar trống khi /api/board chậm/treo
     loadProjects();

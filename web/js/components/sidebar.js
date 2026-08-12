@@ -4,6 +4,8 @@ import { state, $, escapeHtml, getProjectIcon } from "../state.js";
 import { selectProject, removeProject } from "../api.js";
 import { openNewProject } from "./modal.js";
 
+import { renderFlow } from "./flow.js";
+
 export function updateFooterProject() {
   const el = $("footer-project");
   if (el) el.textContent = state.activeProject ? `Project: ${state.activeProject}` : "Project: — chưa chọn";
@@ -13,16 +15,21 @@ export function switchView(view) {
   state.activeView = view;
   document.body.classList.toggle("view-board-active", view === "board");
   document.body.classList.toggle("view-chat-active", view === "chat");
+  document.body.classList.toggle("view-flow-active", view === "flow");
   document.querySelectorAll(".nav-item").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.view === view);
   });
-  $("view-board").classList.toggle("hidden", view !== "board");
-  $("view-chat").classList.toggle("hidden", view !== "chat");
+  $("view-board")?.classList.toggle("hidden", view !== "board");
+  $("view-chat")?.classList.toggle("hidden", view !== "chat");
+  $("view-flow")?.classList.toggle("hidden", view !== "flow");
   $(`dot-${view}`)?.classList.add("hidden");
   if (view === "chat") {
     const box = $("chat-messages");
     if (box) box.scrollTop = box.scrollHeight;
     $("chat-text")?.focus();
+  }
+  if (view === "flow") {
+    renderFlow();
   }
   if (view === "board") renderSidebar();
 }

@@ -23,7 +23,8 @@
           "/static/js/components/sidebar.js": "/static/js/components/sidebar.js?v=__ASSET_V__",
           "/static/js/components/modal.js": "/static/js/components/modal.js?v=__ASSET_V__",
           "/static/js/components/chat.js": "/static/js/components/chat.js?v=__ASSET_V__",
-          "/static/js/components/settings.js": "/static/js/components/settings.js?v=__ASSET_V__"
+          "/static/js/components/settings.js": "/static/js/components/settings.js?v=__ASSET_V__",
+          "/static/js/components/flow.js": "/static/js/components/flow.js?v=__ASSET_V__"
         }
       }
     </script>
@@ -105,6 +106,26 @@
             </svg>
             <span class="nav-item-text">Orchestrator Chat</span>
             <span class="nav-dot hidden" id="dot-chat"></span>
+          </button>
+          <button class="nav-item" data-view="flow" title="Project Tree & DAG Flow">
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <circle cx="6" cy="6" r="3"></circle>
+              <circle cx="6" cy="18" r="3"></circle>
+              <circle cx="18" cy="12" r="3"></circle>
+              <line x1="8.5" y1="7.5" x2="15.5" y2="10.5"></line>
+              <line x1="8.5" y1="16.5" x2="15.5" y2="13.5"></line>
+            </svg>
+            <span class="nav-item-text">Pipeline Flow</span>
+            <span class="nav-dot hidden" id="dot-flow"></span>
           </button>
         </nav>
 
@@ -330,6 +351,40 @@
                 </div>
               </div>
             </form>
+          </div>
+        </section>
+
+        <!-- FLOW & TREE CANVAS -->
+        <section class="view view-flow hidden" id="view-flow">
+          <header class="flow-toolbar">
+            <div class="flow-toolbar-left">
+              <div class="flow-mode-switch">
+                <button class="flow-mode-btn active" id="btn-flow-mode-live">
+                  <span class="flow-mode-icon">⚡</span> Live Workflow Flow
+                </button>
+                <button class="flow-mode-btn" id="btn-flow-mode-tree">
+                  <span class="flow-mode-icon">🌳</span> Project Task Tree
+                </button>
+              </div>
+              <div class="flow-stats-pill" id="flow-stats-pill">
+                <span class="metric-tag"><span class="dot-pulse"></span> Ready</span>
+              </div>
+            </div>
+            <div class="flow-toolbar-right">
+              <div class="flow-zoom-controls">
+                <button class="flow-tool-btn" id="btn-flow-zoom-out" title="Thu nhỏ (-)">−</button>
+                <span class="flow-zoom-level" id="flow-zoom-level">100%</span>
+                <button class="flow-tool-btn" id="btn-flow-zoom-in" title="Phóng to (+)">+</button>
+                <button class="flow-tool-btn" id="btn-flow-zoom-reset" title="Reset zoom (100%)">1:1</button>
+                <button class="flow-tool-btn" id="btn-flow-fit" title="Căn vừa màn hình (Fit View)">⊡ Fit</button>
+              </div>
+            </div>
+          </header>
+          <div class="flow-canvas-container" id="flow-canvas-container">
+            <div class="flow-viewport" id="flow-viewport"></div>
+            <div class="flow-canvas-hint">
+              <span>🖱️ Kéo để di chuyển • Cuộn chuột để Zoom • Click Node để mở chi tiết Task</span>
+            </div>
           </div>
         </section>
       </div>
