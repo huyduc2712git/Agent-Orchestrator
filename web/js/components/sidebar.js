@@ -4,7 +4,7 @@ import { state, $, escapeHtml, getProjectIcon } from "../state.js";
 import { selectProject, removeProject } from "../api.js";
 import { openNewProject } from "./modal.js";
 
-import { renderFlow } from "./flow.js";
+import { renderFlow, scrollFlowChatToBottom } from "./flow.js";
 
 export function updateFooterProject() {
   const el = $("footer-project");
@@ -30,6 +30,7 @@ export function switchView(view) {
   }
   if (view === "flow") {
     renderFlow();
+    scrollFlowChatToBottom(false);
   }
   if (view === "board") renderSidebar();
 }

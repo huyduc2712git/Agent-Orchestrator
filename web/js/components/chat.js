@@ -10,7 +10,7 @@ const SKILL_TAG_RE = new RegExp(
   "gi"
 );
 
-function skillPillHtml(tagWithAt, extraClass = "") {
+export function skillPillHtml(tagWithAt, extraClass = "") {
   const key = String(tagWithAt || "").replace(/^@/, "").toLowerCase();
   const cls = ["chat-skill-pill", extraClass].filter(Boolean).join(" ");
   return (
@@ -23,7 +23,7 @@ function skillPillHtml(tagWithAt, extraClass = "") {
 const SKILL_TAG_SET = new Set(SKILL_TAG_NAMES.split("|"));
 
 /** Tách @skill khỏi nội dung để render pill riêng (không nhét trong bubble). */
-function splitMessageSkills(message) {
+export function splitMessageSkills(message) {
   const tags = [];
   let body = String(message || "");
   body = body.replace(SKILL_TAG_RE, (full, prefix, tag) => {
@@ -44,7 +44,7 @@ function splitMessageSkills(message) {
 }
 
 /** Tin user: ảnh + skills + text tách riêng để layout (ảnh | skills → text dưới). */
-function splitUserMessageParts(message) {
+export function splitUserMessageParts(message) {
   const { body: afterSkills, tags } = splitMessageSkills(message);
   const images = [];
   let body = afterSkills.replace(
@@ -70,7 +70,7 @@ const MISSING_IMG_SVG =
       "</svg>"
   );
 
-function userImageHtml(url) {
+export function userImageHtml(url) {
   const src = escapeHtml(url);
   return (
     `<a href="${src}" target="_blank" rel="noopener" class="chat-img-link" title="Ảnh đính kèm">` +
@@ -357,6 +357,11 @@ export async function loadChat() {
   } else {
     state.chatMessages.forEach((m, i) => renderChatMessage(m, i));
   }
+  try {
+    if (typeof window.renderFlowChat === "function") {
+      window.renderFlowChat();
+    }
+  } catch (_) {}
 }
 
 export function resizeChatInput() {

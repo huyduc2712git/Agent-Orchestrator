@@ -44,7 +44,10 @@
         background: #3f1d1d;
         border: 1px solid #ef4444;
         color: #fecaca;
-        font: 13px/1.45 ui-sans-serif, system-ui, sans-serif;
+        font:
+          13px/1.45 ui-sans-serif,
+          system-ui,
+          sans-serif;
       "
     ></div>
     <div class="app-shell">
@@ -107,7 +110,11 @@
             <span class="nav-item-text">Orchestrator Chat</span>
             <span class="nav-dot hidden" id="dot-chat"></span>
           </button>
-          <button class="nav-item" data-view="flow" title="Project Tree & DAG Flow">
+          <button
+            class="nav-item"
+            data-view="flow"
+            title="Project Tree & DAG Flow"
+          >
             <svg
               width="16"
               height="16"
@@ -194,10 +201,16 @@
                 <path d="M18 9a9 9 0 0 1-9 9"></path>
               </svg>
               <div class="board-focus-text">
-                <span class="board-focus-path" id="board-focus-path">— chưa chọn project</span>
+                <span class="board-focus-path" id="board-focus-path"
+                  >— chưa chọn project</span
+                >
                 <span class="board-focus-task" id="board-focus-task"></span>
               </div>
-              <span class="board-focus-pill" id="board-focus-pill" hidden></span>
+              <span
+                class="board-focus-pill"
+                id="board-focus-pill"
+                hidden
+              ></span>
             </div>
             <div class="board-toolbar-right">
               <button class="btn-orchestrator" id="btn-orchestrator">
@@ -263,9 +276,15 @@
             <div class="chat-messages" id="chat-messages"></div>
 
             <form class="chat-composer" id="chat-form">
-              <div class="composer-attach-preview hidden" id="chat-image-preview">
+              <div
+                class="composer-attach-preview hidden"
+                id="chat-image-preview"
+              >
                 <img id="chat-image-preview-img" alt="Ảnh đính kèm" />
-                <span class="composer-attach-name" id="chat-image-preview-name"></span>
+                <span
+                  class="composer-attach-name"
+                  id="chat-image-preview-name"
+                ></span>
                 <button
                   type="button"
                   class="composer-attach-remove"
@@ -282,7 +301,11 @@
                   role="listbox"
                   aria-label="Gợi ý tag"
                 ></div>
-                <div id="chat-skill-chips" class="chat-skill-chips hidden" aria-label="Skills đã gắn"></div>
+                <div
+                  id="chat-skill-chips"
+                  class="chat-skill-chips hidden"
+                  aria-label="Skills đã gắn"
+                ></div>
                 <textarea
                   id="chat-text"
                   rows="2"
@@ -354,37 +377,196 @@
           </div>
         </section>
 
-        <!-- FLOW & TREE CANVAS -->
+        <!-- FLOW & TREE CANVAS WITH MINI CHAT -->
         <section class="view view-flow hidden" id="view-flow">
-          <header class="flow-toolbar">
-            <div class="flow-toolbar-left">
-              <div class="flow-mode-switch">
-                <button class="flow-mode-btn active" id="btn-flow-mode-live">
-                  <span class="flow-mode-icon">⚡</span> Live Workflow Flow
-                </button>
-                <button class="flow-mode-btn" id="btn-flow-mode-tree">
-                  <span class="flow-mode-icon">🌳</span> Project Task Tree
-                </button>
+          <div class="flow-layout">
+            <!-- Mini Side Chat Assistant -->
+            <aside class="flow-mini-chat" id="flow-mini-chat">
+              <div class="mini-chat-header">
+                <div class="mini-chat-title-group">
+                  <div class="mini-chat-avatar">
+                    <img
+                      src="/static/avatar_agent/Conan.png"
+                      alt="Conan"
+                      class="avatar-img"
+                    />
+                  </div>
+                  <div class="mini-chat-title-info">
+                    <span class="mini-chat-name">Shinichi Ku Tin</span>
+                    <span class="mini-chat-sub"
+                      ><span class="mini-chat-dot"></span> Online • Lead
+                      Orchestrator</span
+                    >
+                  </div>
+                </div>
+                <div class="mini-chat-actions">
+                  <button
+                    type="button"
+                    class="mini-chat-action-btn"
+                    id="btn-mini-chat-close"
+                    title="Thu gọn khung chat"
+                  >
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                    >
+                      <line x1="18" y1="6" x2="6" y2="18"></line>
+                      <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                  </button>
+                </div>
               </div>
-              <div class="flow-stats-pill" id="flow-stats-pill">
-                <span class="metric-tag"><span class="dot-pulse"></span> Ready</span>
+
+              <div class="mini-chat-body" id="flow-chat-messages">
+                <div class="mini-chat-empty">
+                  <span class="empty-icon">💬</span>
+                  <p>
+                    Trò chuyện hoặc giao task cho <strong>Conan</strong> tại
+                    đây.
+                  </p>
+                  <span class="empty-hint"
+                    >Sơ đồ workflow bên phải sẽ cập nhật realtime theo từng chỉ
+                    đạo của bạn!</span
+                  >
+                </div>
               </div>
-            </div>
-            <div class="flow-toolbar-right">
-              <div class="flow-zoom-controls">
-                <button class="flow-tool-btn" id="btn-flow-zoom-out" title="Thu nhỏ (-)">−</button>
-                <span class="flow-zoom-level" id="flow-zoom-level">100%</span>
-                <button class="flow-tool-btn" id="btn-flow-zoom-in" title="Phóng to (+)">+</button>
-                <button class="flow-tool-btn" id="btn-flow-zoom-reset" title="Reset zoom (100%)">1:1</button>
-                <button class="flow-tool-btn" id="btn-flow-fit" title="Căn vừa màn hình (Fit View)">⊡ Fit</button>
+
+              <div class="mini-chat-footer">
+                <form class="mini-chat-form" id="flow-chat-form">
+                  <div class="mini-chat-input-box">
+                    <button
+                      type="button"
+                      class="mini-chat-btn-icon"
+                      id="flow-chat-attach"
+                      title="Đính kèm ảnh (mockup/UI)"
+                    >
+                      <svg
+                        width="15"
+                        height="15"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                      >
+                        <path
+                          d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"
+                        ></path>
+                      </svg>
+                    </button>
+                    <input
+                      type="text"
+                      class="mini-chat-input"
+                      id="flow-chat-input"
+                      placeholder="Giao task hoặc trao đổi với Conan..."
+                      autocomplete="off"
+                    />
+                    <button
+                      type="submit"
+                      class="mini-chat-btn-send"
+                      id="flow-chat-send"
+                      title="Gửi yêu cầu"
+                    >
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                      >
+                        <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"></path>
+                      </svg>
+                    </button>
+                  </div>
+                  <input
+                    type="file"
+                    id="flow-chat-file-input"
+                    accept="image/*"
+                    class="hidden"
+                  />
+                </form>
               </div>
-            </div>
-          </header>
-          <div class="flow-canvas-container" id="flow-canvas-container">
-            <div class="flow-viewport" id="flow-viewport"></div>
-            <div class="flow-canvas-hint">
-              <span>🖱️ Kéo để di chuyển • Cuộn chuột để Zoom • Click Node để mở chi tiết Task</span>
-            </div>
+            </aside>
+
+            <!-- Main Canvas Area -->
+            <main class="flow-main-area">
+              <header class="flow-toolbar">
+                <div class="flow-toolbar-left">
+                  <button
+                    type="button"
+                    class="flow-tool-btn flow-chat-toggle-btn"
+                    id="btn-flow-toggle-chat"
+                    title="Ẩn/Hiện khung chat Conan"
+                  >
+                    💬 <span class="flow-chat-btn-text">Conan Chat</span>
+                  </button>
+                  <div class="flow-mode-switch">
+                    <button
+                      class="flow-mode-btn active"
+                      id="btn-flow-mode-live"
+                    >
+                      <span class="flow-mode-icon">⚡</span> Live Workflow Flow
+                    </button>
+                    <button class="flow-mode-btn" id="btn-flow-mode-tree">
+                      <span class="flow-mode-icon">🌳</span> Project Task Tree
+                    </button>
+                  </div>
+                  <div class="flow-stats-pill" id="flow-stats-pill">
+                    <span class="metric-tag"
+                      ><span class="dot-pulse"></span> Ready</span
+                    >
+                  </div>
+                </div>
+                <div class="flow-toolbar-right">
+                  <div class="flow-zoom-controls">
+                    <button
+                      class="flow-tool-btn"
+                      id="btn-flow-zoom-out"
+                      title="Thu nhỏ (-)"
+                    >
+                      −
+                    </button>
+                    <span class="flow-zoom-level" id="flow-zoom-level"
+                      >100%</span
+                    >
+                    <button
+                      class="flow-tool-btn"
+                      id="btn-flow-zoom-in"
+                      title="Phóng to (+)"
+                    >
+                      +
+                    </button>
+                    <button
+                      class="flow-tool-btn"
+                      id="btn-flow-zoom-reset"
+                      title="Reset zoom (100%)"
+                    >
+                      1:1
+                    </button>
+                    <button
+                      class="flow-tool-btn"
+                      id="btn-flow-fit"
+                      title="Căn vừa màn hình (Fit View)"
+                    >
+                      ⊡ Fit
+                    </button>
+                  </div>
+                </div>
+              </header>
+              <div class="flow-canvas-container" id="flow-canvas-container">
+                <div class="flow-viewport" id="flow-viewport"></div>
+                <div class="flow-canvas-hint">
+                  <span
+                    >🖱️ Kéo để di chuyển • Cuộn chuột để Zoom • Click Node để mở
+                    chi tiết Task</span
+                  >
+                </div>
+              </div>
+            </main>
           </div>
         </section>
       </div>
@@ -476,11 +658,7 @@
           >
             📁 Projects
           </button>
-          <button
-            type="button"
-            class="settings-tab-btn"
-            data-tab="tab-skills"
-          >
+          <button type="button" class="settings-tab-btn" data-tab="tab-skills">
             ✦ Skills
           </button>
         </div>
@@ -628,8 +806,9 @@
             <div class="panel-title">Project đang focus</div>
             <p class="settings-hint">
               Project đang chọn trên sidebar. Gắn link MCP riêng cho project.
-              Nên dùng <b>Builtin</b> (<code>/mcp/figma</code>) — dùng Figma PAT + Vision,
-              không cần OAuth. Remote <code>mcp.figma.com</code> thường 401 với client tùy chỉnh.
+              Nên dùng <b>Builtin</b> (<code>/mcp/figma</code>) — dùng Figma PAT
+              + Vision, không cần OAuth. Remote
+              <code>mcp.figma.com</code> thường 401 với client tùy chỉnh.
             </p>
             <div
               id="focus-project-card"

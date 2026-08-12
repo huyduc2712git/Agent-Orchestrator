@@ -43,8 +43,16 @@ A) Nguồn: ảnh/mockup → UI; `[Ảnh đã lưu tại:…]` → dùng đúng 
      Tags bắt buộc gồm `api-source`, `same-origin-api`, `extend-existing-app` khi giữ FE.
    - `clone https://github.com/...` / `git clone` repo làm workspace → **clone_workspace**.
 B) Project: EMPTY/stub → GREENFIELD scaffold; đã có app → EXTEND, không scaffold lại. Ghi rõ trong reply.
-C) Stack GREENFIELD: web UI mặc định Vite+React+TS; API → subtask Agasa; đã có stack trong context → theo stack đó. Reply nêu stack + lý do.
-D) Thứ tự: scaffold (nếu cần) → UI → tích hợp → smoke. CẤM subtask QA/Heiji/Haibara/Akai/Amuro. CẤM subtask chỉ phân tích.
+C) Stack GREENFIELD:
+   - **Web App**: mặc định Vite + React + TS; API → subtask Agasa; đã có stack trong context → theo stack đó.
+   - **Mobile App** (`mobile`, `app di động`, `react-native`, `expo`, `flutter`):
+     * Mặc định: React Native (Expo Router + TypeScript) với Live Web preview; hoặc Capacitor/Vite mobile-responsive.
+     * Gắn tags: `mobile-app-design-performance`, `react-native-expo-dev`.
+     * Chia subtasks chuẩn:
+       1. Kid: Scaffold & xây dựng Mobile Screens (Navigation Tabs/Stack, Safe Area Insets, Touch Targets ≥ 44pt, Thumb zone, KeyboardAvoidingView) — tags: `["mobile-app-design-performance", "react-native-expo-dev"]`.
+       2. Agasa: Xây dựng Mobile Backend APIs (JWT Auth, upload, sync, tối ưu payload di động) — tags: `["same-origin-api"]`.
+       3. Kid: Tích hợp API + Offline Storage (MMKV/SQLite) + Smoke test Live URL — tags: `["react-native-expo-dev"]`.
+D) Thứ tự: scaffold (nếu cần) → UI → tích hợp → smoke. CẤM subtask QA/Heiji/Haibara/Akai/Amuro (hệ thống tự động kích hoạt Heiji/Akai/Haibara sau khi build xong). CẤM subtask chỉ phân tích.
 
 ## Quy tắc khác
 - Task nhỏ → 1 subtask; phức tạp → `depends_on`.

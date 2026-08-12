@@ -23,6 +23,12 @@ logging.basicConfig(
 )
 log = logging.getLogger("api")
 
+# Đảm bảo các thư mục SDK quan trọng (như Flutter) luôn có trong PATH runtime
+for _sdk_bin in (Path("D:/flutter/bin"), Path("C:/flutter/bin"), Path("C:/src/flutter/bin")):
+    if _sdk_bin.is_dir() and str(_sdk_bin.resolve()) not in os.environ.get("PATH", ""):
+        os.environ["PATH"] = f"{_sdk_bin.resolve()};{os.environ.get('PATH', '')}"
+        log.info("Injected %s into runtime PATH", _sdk_bin.resolve())
+
 # ---------- Auto-start backend cho active project ----------
 
 _backend_procs: dict[str, subprocess.Popen] = {}  # slug → Popen

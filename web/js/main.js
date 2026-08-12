@@ -8,7 +8,7 @@ import { renderSidebar, switchView, goChat, notifyTab } from "./components/sideb
 import { openModal, openNewProject, setProjectCreateMode, renderEvent, shouldShowEvent } from "./components/modal.js";
 import { loadChat, sendChatMessage, resizeChatInput, resetChatInputHeight, appendChatMessage, renderChatMessage, setThinking, initChatImageAttach, handleChatMentionKeydown, loadSkillMentions } from "./components/chat.js";
 import { initSettingsEvents, openSettingsModal } from "./components/settings.js";
-import { initFlowCanvas, renderFlow } from "./components/flow.js";
+import { initFlowCanvas, renderFlow, renderFlowChat } from "./components/flow.js";
 
 // Make key functions available globally for inline HTML events
 window.blockTask = blockTask;
@@ -19,6 +19,7 @@ window.openSettingsModal = openSettingsModal;
 window.playTing = playTing;
 window.toggleSound = toggleSound;
 window.renderFlow = renderFlow;
+window.renderFlowChat = renderFlowChat;
 
 function connectWS() {
   const protocol = location.protocol === "https:" ? "wss:" : "ws:";
@@ -38,6 +39,7 @@ function connectWS() {
       const type = ev.type || ev.event;
       if (type === "chat" || type === "chat_message") {
         appendChatMessage(ev.message);
+        renderFlowChat();
         notifyTab("chat");
         // Ting khi có thông báo hoàn thành hoặc bot báo xong
         const text = ev.message?.text || "";

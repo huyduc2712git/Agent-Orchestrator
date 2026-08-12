@@ -1,8 +1,18 @@
 /* Agent Orchestrator — Workflow & Project Tree Canvas Component */
 
-import { state, $, escapeHtml } from "../state.js";
+import { state, $, escapeHtml, formatTime } from "../state.js";
 import { AGENT_INFO, getAgentAvatarHtml } from "../constants.js";
 import { openModal } from "./modal.js";
+import {
+  formatMarkdownMessage,
+  sendChatMessage,
+  sendChatImage,
+  skillPillHtml,
+  splitUserMessageParts,
+  userImageHtml,
+  conanWorkStats,
+  plannerModelLabel,
+} from "./chat.js";
 
 let canvasState = {
   mode: "flow", // "flow" (Live 6-Phase Pipeline) | "tree" (Project Task Dependency Tree)
@@ -16,6 +26,7 @@ let canvasState = {
 };
 
 export function initFlowCanvas() {
+  initFlowChat();
   const container = $("flow-canvas-container");
   if (!container) return;
 
@@ -255,17 +266,17 @@ function renderLiveOrchestrationFlow(container) {
       id: "node-router",
       type: "decision",
       title: "Task Decision Router",
-      sub: "Multi-Agent Subtask Classifier",
+      sub: "Multi-Agent Workflow Classifier",
       icon: "🔀",
       x: 470,
       y: 150,
-      w: 320,
+      w: 330,
       h: 195,
       active: kidStat.active || agasaStat.active || akaiStat.active,
       branches: [
-        { label: "Frontend Task (UI/React/Vite)", agent: "kid", active: kidStat.active },
-        { label: "Backend Task (API/DB/Server)", agent: "agasa", active: agasaStat.active },
-        { label: "Security & Pentest Audit", agent: "akai", active: akaiStat.active || amuroStat.active },
+        { label: "📱 Mobile / Web UI (Expo/React/Safe Area)", agent: "kid", active: kidStat.active },
+        { label: "⚙️ Backend & Mobile APIs (FastAPI/Auth/Sync)", agent: "agasa", active: agasaStat.active },
+        { label: "🛡️ Security & SecureStore Audit", agent: "akai", active: akaiStat.active || amuroStat.active },
       ],
     },
     // Worker nodes
@@ -274,48 +285,51 @@ function renderLiveOrchestrationFlow(container) {
       type: "worker",
       agent: "kid",
       title: "Kaito Kid",
-      sub: "Frontend Engineer",
+      sub: "Mobile & Web UI Specialist",
       icon: "🎩",
-      x: 840,
-      y: 70,
-      w: 210,
+      x: 850,
+      y: 60,
+      w: 220,
       h: 70,
       active: kidStat.active,
       status: kidStat.status,
       accent: "#fb923c",
       currentTask: kidStat.task,
+      count: kidStat.count,
     },
     {
       id: "node-agasa",
       type: "worker",
       agent: "agasa",
       title: "Dr. Agasa",
-      sub: "Backend Specialist",
+      sub: "Backend & Mobile APIs",
       icon: "🧪",
-      x: 840,
-      y: 170,
-      w: 210,
+      x: 850,
+      y: 165,
+      w: 220,
       h: 70,
       active: agasaStat.active,
       status: agasaStat.status,
       accent: "#a78bfa",
       currentTask: agasaStat.task,
+      count: agasaStat.count,
     },
     {
       id: "node-akai",
       type: "worker",
       agent: "akai",
       title: "Shuichi Akai / Amuro",
-      sub: "Security & Pentest",
+      sub: "Security & Storage Audit",
       icon: "🔫",
-      x: 840,
+      x: 850,
       y: 270,
-      w: 210,
+      w: 220,
       h: 70,
       active: akaiStat.active || amuroStat.active,
       status: akaiStat.status,
       accent: "#93c5fd",
       currentTask: akaiStat.task || amuroStat.task,
+      count: (akaiStat.count || 0) + (amuroStat.count || 0),
     },
     // Quality & Critic stage
     {
@@ -323,32 +337,34 @@ function renderLiveOrchestrationFlow(container) {
       type: "critic",
       agent: "heiji",
       title: "Heiji Hattori",
-      sub: "Visual QA (Playwright)",
+      sub: "Visual QA & Mobile Emulation",
       icon: "🔍",
-      x: 1100,
-      y: 90,
-      w: 210,
+      x: 1120,
+      y: 60,
+      w: 220,
       h: 70,
       active: heijiStat.active,
       status: heijiStat.status,
       accent: "#4ade80",
       currentTask: heijiStat.task,
+      count: heijiStat.count,
     },
     {
       id: "node-haibara",
       type: "critic",
       agent: "haibara",
       title: "Ai Haibara",
-      sub: "Quality Reviewer",
+      sub: "Quality & Acceptance Review",
       icon: "💊",
-      x: 1100,
-      y: 210,
-      w: 210,
+      x: 1120,
+      y: 195,
+      w: 220,
       h: 70,
       active: haibaraStat.active,
       status: haibaraStat.status,
       accent: "#f472b6",
       currentTask: haibaraStat.task,
+      count: haibaraStat.count,
     },
     // Final review
     {
@@ -358,8 +374,8 @@ function renderLiveOrchestrationFlow(container) {
       title: "Conan Final Review",
       sub: "Deliverable Acceptance",
       icon: "⚖️",
-      x: 1360,
-      y: 155,
+      x: 1390,
+      y: 130,
       w: 200,
       h: 70,
       active: isFinalReviewActive,
@@ -372,8 +388,8 @@ function renderLiveOrchestrationFlow(container) {
       title: "Complete",
       sub: "Memory & Board Saved",
       icon: "🏁",
-      x: 1610,
-      y: 160,
+      x: 1640,
+      y: 135,
       w: 150,
       h: 60,
       active: true,
@@ -387,12 +403,12 @@ function renderLiveOrchestrationFlow(container) {
     { from: "node-conan-plan", to: "node-router", active: conanStat.active || hasAnyActive },
     { from: "node-router", to: "node-kid", branchIndex: 0, active: kidStat.active },
     { from: "node-router", to: "node-agasa", branchIndex: 1, active: agasaStat.active },
-    { from: "node-router", to: "node-akai", branchIndex: 2, active: akaiStat.active },
+    { from: "node-router", to: "node-akai", branchIndex: 2, active: akaiStat.active || amuroStat.active },
     { from: "node-kid", to: "node-heiji", active: heijiStat.active || kidStat.active },
-    { from: "node-agasa", to: "node-haibara", active: agasaStat.active || haibaraStat.active },
-    { from: "node-akai", to: "node-haibara", active: akaiStat.active || haibaraStat.active },
-    { from: "node-heiji", to: "node-final-review", active: heijiStat.active },
-    { from: "node-haibara", to: "node-final-review", active: haibaraStat.active },
+    { from: "node-agasa", to: "node-haibara", dstOffset: 24, active: agasaStat.active || haibaraStat.active },
+    { from: "node-akai", to: "node-haibara", dstOffset: 48, active: akaiStat.active || amuroStat.active || haibaraStat.active },
+    { from: "node-heiji", to: "node-final-review", dstOffset: 24, active: heijiStat.active },
+    { from: "node-haibara", to: "node-final-review", dstOffset: 48, active: haibaraStat.active },
     { from: "node-final-review", to: "node-end", active: true },
   ];
 
@@ -406,10 +422,11 @@ function renderLiveOrchestrationFlow(container) {
     let x1 = src.x + src.w;
     let y1 = src.y + (src.h / 2);
     if (src.type === "decision" && edge.branchIndex !== undefined) {
-      y1 = src.y + 75 + (edge.branchIndex * 38);
+      x1 = src.x + src.w - 18;
+      y1 = src.y + 64 + (edge.branchIndex * 36);
     }
     const x2 = dst.x;
-    const y2 = dst.y + (dst.h / 2);
+    const y2 = edge.dstOffset !== undefined ? dst.y + edge.dstOffset : dst.y + (dst.h / 2);
 
     const dx = Math.max(Math.abs(x2 - x1) * 0.5, 40);
     const d = `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
@@ -638,4 +655,191 @@ function renderProjectTaskTree(container) {
       ${nodesHtml}
     </div>
   `;
+}
+
+/** Cuộn mượt hoặc tức thì xuống tin nhắn mới nhất trong Mini Chat */
+export function scrollFlowChatToBottom(smooth = false) {
+  const box = $("flow-chat-messages");
+  if (!box) return;
+  const doScroll = () => {
+    box.scrollTo({
+      top: box.scrollHeight,
+      behavior: smooth ? "smooth" : "auto",
+    });
+  };
+  doScroll();
+  requestAnimationFrame(doScroll);
+  setTimeout(doScroll, 80);
+  setTimeout(doScroll, 320); // Đảm bảo cuộn tới đáy sau khi transition hoàn tất
+}
+
+/** Khởi tạo các sự kiện cho khung Chat Mini bên cạnh Canvas */
+export function initFlowChat() {
+  const miniChat = $("flow-mini-chat");
+  const toggleBtn = $("btn-flow-toggle-chat");
+  const closeBtn = $("btn-mini-chat-close");
+  const form = $("flow-chat-form");
+  const input = $("flow-chat-input");
+  const attachBtn = $("flow-chat-attach");
+  const fileInput = $("flow-chat-file-input");
+
+  const setChatOpen = (open) => {
+    if (!miniChat) return;
+    miniChat.classList.toggle("collapsed", !open);
+    toggleBtn?.classList.toggle("is-active", open);
+    try {
+      localStorage.setItem("flow-mini-chat-open", open ? "true" : "false");
+    } catch (_) {}
+    if (open) {
+      scrollFlowChatToBottom(false);
+    }
+  };
+
+  // Mặc định mở khung chat trên màn hình lớn
+  let savedState = null;
+  try {
+    savedState = localStorage.getItem("flow-mini-chat-open");
+  } catch (_) {}
+  setChatOpen(savedState !== "false");
+
+  toggleBtn?.addEventListener("click", () => {
+    const isCurrentlyCollapsed = miniChat?.classList.contains("collapsed");
+    setChatOpen(isCurrentlyCollapsed);
+  });
+
+  closeBtn?.addEventListener("click", () => {
+    setChatOpen(false);
+  });
+
+  // Submit gửi tin nhắn cho Conan
+  form?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const text = (input?.value || "").trim();
+    if (!text) return;
+    input.value = "";
+    await sendChatMessage(text);
+    renderFlowChat();
+  });
+
+  // Đính kèm ảnh cho Vision
+  attachBtn?.addEventListener("click", () => fileInput?.click());
+  fileInput?.addEventListener("change", async () => {
+    const file = fileInput.files && fileInput.files[0];
+    fileInput.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      alert("Chỉ chọn file ảnh (png/jpg/webp/gif).");
+      return;
+    }
+    const text = (input?.value || "").trim();
+    if (input) input.value = "";
+    await sendChatImage(file, text);
+    renderFlowChat();
+  });
+
+  renderFlowChat();
+  scrollFlowChatToBottom(false);
+}
+
+/** Render đồng bộ danh sách tin nhắn realtime trong Mini Chat */
+export function renderFlowChat() {
+  const box = $("flow-chat-messages");
+  if (!box) return;
+
+  if (!state.chatMessages || state.chatMessages.length === 0) {
+    box.innerHTML = `
+      <div class="mini-chat-empty">
+        <span class="empty-icon">💬</span>
+        <p>Trò chuyện hoặc giao task cho <strong>Conan</strong> tại đây.</p>
+        <span class="empty-hint">Sơ đồ workflow bên phải sẽ cập nhật realtime theo từng chỉ đạo của bạn!</span>
+      </div>
+    `;
+    return;
+  }
+
+  let html = "";
+  state.chatMessages.forEach((m, index) => {
+    if (!m || !m.message || !m.message.trim()) return;
+    const timeStr = formatTime(m.created_at);
+
+    if (m.role === "system") {
+      const work = conanWorkStats(state.chatMessages, index);
+      html += `
+        <div class="msg-row system-msg">
+          ${getAgentAvatarHtml("system")}
+          <div class="msg-conan-wrapper">
+            <div class="msg-meta-conan">
+              <span class="name" style="color: #eab308;">System / Board Patrol</span>
+              ${timeStr ? `<span class="dot">•</span><span class="time">${escapeHtml(timeStr)}</span>` : ""}
+              ${work ? `<span class="worked-badge">${escapeHtml(work.label)}</span>` : ""}
+              <span class="system-badge">System Notification</span>
+            </div>
+            <div class="msg-bubble system-bubble">${formatMarkdownMessage(m.message)}</div>
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+    const isUser = m.role === "user";
+    if (isUser) {
+      const { body, tags, images } = splitUserMessageParts(m.message);
+      const topParts = [];
+      if (images.length) {
+        topParts.push(`<div class="msg-user-media">${images.map(userImageHtml).join("")}</div>`);
+      }
+      if (tags.length) {
+        topParts.push(`<div class="msg-skill-row">${tags.map((t) => skillPillHtml(t)).join("")}</div>`);
+      }
+      const topHtml = topParts.length ? `<div class="msg-user-top">${topParts.join("")}</div>` : "";
+      const textHtml = body ? `<div class="msg-user-text">${formatMarkdownMessage(body)}</div>` : "";
+      if (!topHtml && !textHtml) return;
+
+      html += `
+        <div class="msg-row user">
+          <div class="msg-user-wrapper">
+            <div class="msg-meta-user">
+              ${timeStr ? `<span class="time">${escapeHtml(timeStr)}</span><span class="dot">•</span>` : ""}
+              <span class="name">Bạn</span>
+            </div>
+            <div class="msg-bubble user-bubble">
+              ${topHtml}
+              ${textHtml}
+            </div>
+          </div>
+          ${getAgentAvatarHtml("user")}
+        </div>
+      `;
+    } else {
+      const work = conanWorkStats(state.chatMessages, index);
+      html += `
+        <div class="msg-row conan">
+          ${getAgentAvatarHtml("conan")}
+          <div class="msg-conan-wrapper">
+            <div class="msg-meta-conan">
+              <span class="name">Conan</span>
+              ${timeStr ? `<span class="dot">•</span><span class="time">${escapeHtml(timeStr)}</span>` : ""}
+              <span class="model-badge">${escapeHtml(plannerModelLabel())}</span>
+              ${work ? `<span class="worked-badge">${escapeHtml(work.label)}</span>` : ""}
+            </div>
+            <div class="msg-bubble conan-bubble">${formatMarkdownMessage(m.message)}</div>
+          </div>
+        </div>
+      `;
+    }
+  });
+
+  if (state.thinking) {
+    html += `
+      <div class="msg-row conan thinking" id="flow-thinking-row">
+        ${getAgentAvatarHtml("conan")}
+        <div class="msg-bubble thinking-bubble" aria-live="polite" aria-label="Conan đang suy nghĩ">
+          <span class="thinking-text">Conan đang suy nghĩ</span><span class="thinking-ellipsis" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span>
+        </div>
+      </div>
+    `;
+  }
+
+  box.innerHTML = html;
+  scrollFlowChatToBottom(false);
 }

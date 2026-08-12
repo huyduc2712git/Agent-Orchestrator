@@ -58,6 +58,13 @@ def _preview_serve_root(project_dir: Path) -> Path:
     dist = project_dir / "dist"
     if (dist / "index.html").is_file():
         return dist
+    # FIX bug-1940: Flutter web emits build output to build/web/ (not dist/).
+    # Serving from build/web makes extension-less build assets (assets/NOTICES)
+    # resolvable by the allow-list check and keeps raw project-root files
+    # (verify*.txt, fix_preview*.py, served_*.html, logs) off the public host.
+    web = project_dir / "build" / "web"
+    if (web / "index.html").is_file():
+        return web
     return project_dir
 
 
@@ -136,6 +143,7 @@ _PREVIEW_ALLOW_EXT = frozenset({
     ".html", ".htm", ".js", ".css", ".svg", ".png", ".jpg", ".jpeg", ".gif",
     ".webp", ".avif", ".ico", ".bmp", ".woff", ".woff2", ".ttf", ".eot",
     ".otf", ".mp4", ".webm", ".mp3", ".ogg", ".wav", ".json", ".webmanifest",
+    ".wasm", ".bin", ".frag", ".symbols",
 })
 _PREVIEW_DENY_EXT = frozenset({
     ".cjs", ".mjs", ".log", ".py", ".pyc", ".pem", ".key", ".p12", ".pfx",
@@ -152,7 +160,7 @@ _PREVIEW_DENY_FILES = frozenset({
 _PREVIEW_DENY_DIRS = ("node_modules", ".git", ".svn", ".hg", "src", "public", "qa-shots", "coverage")
 
 
-def _is_public_preview_asset(rel_path: str) -> bool:
+def _is_public_preview_asset(rel_path: str, serve_root: Path | None = None) -> bool:
     """Allow-list for the public static preview host.
 
     FIX bug-7028 (source disclosure): the old deny-list only blocked a handful
@@ -185,7 +193,20 @@ def _is_public_preview_asset(rel_path: str) -> bool:
         return False
     # FIX bug-7028: strict allow-list — only build-output asset extensions.
     if ext not in _PREVIEW_ALLOW_EXT:
-        return False
+        # FIX bug-1940: Flutter web emits extension-less build assets
+        # (assets/NOTICES). Allow only when the file physically exists
+        # inside the preview root; deny-lists above still apply.
+        if ext != "":
+            return False
+        if serve_root is None or not serve_root.is_dir():
+            return False
+        try:
+            root_res = serve_root.resolve()
+            cand = (serve_root / rel_path).resolve()
+        except (OSError, ValueError):
+            return False
+        if not str(cand).startswith(str(root_res)) or not cand.is_file():
+            return False
     # config / QA artifacts must stay private even with an allowed extension
     low = name.lower()
     if low.startswith("probe") or low.startswith("qa-") or low.startswith("check-"):
@@ -228,7 +249,7 @@ async def preview(project: str, file_path: str = ""):
     rel_path = file_path.strip("/") or "index.html"
     # FIX bug-2208: deny-list before resolving/serving - backend source, logs
     # and verify artifacts must never be exposed by the public preview host.
-    if not _is_public_preview_asset(rel_path):
+    if not _is_public_preview_asset(rel_path, serve_root):
         return JSONResponse(
             {"error": "forbidden: not a public preview asset"},
             status_code=403,

@@ -27,6 +27,19 @@ _WEB_FE_CONTEXT = re.compile(
 _WEB_FE_DEFAULTS_BUILD = ("frontend-design", "react-best-practices")
 _WEB_FE_DEFAULTS_QA = ("accessibility", "frontend-design")
 
+# Task dựng Mobile App → tự ưu tiên bộ Mobile skills theo từng agent
+_MOBILE_CONTEXT = re.compile(
+    r"("
+    r"\bmobile\b|react[- ]?native|expo\b|flutter|capacitor|ios\b|android\b|"
+    r"touch[- ]?target|safe[- ]?area|app\s*di\s*động|ứng\s*dụng\s*mobile|"
+    r"bottom[- ]?sheet|tab[- ]?bar|thumb[- ]?zone"
+    r")",
+    re.I,
+)
+_MOBILE_DEFAULTS_BUILD = ("mobile-app-design-performance", "react-native-expo-dev")
+_MOBILE_DEFAULTS_QA = ("mobile-visual-qa-emulation", "mobile-app-design-performance")
+_MOBILE_DEFAULTS_SEC = ("mobile-security-storage-audit",)
+
 # Heuristics (title+description) — auto-match without tags
 _NATIVE_HEURISTICS: list[tuple[str, re.Pattern[str]]] = [
     ("replace-brand-assets", re.compile(
@@ -56,6 +69,27 @@ _NATIVE_HEURISTICS: list[tuple[str, re.Pattern[str]]] = [
     ("accessibility", re.compile(
         r"\b(a11y|accessibility|wcag|screen\s*reader|aria\b|keyboard\s*nav|"
         r"khả\s*năng\s*tiếp\s*cận|truy\s*cập\s*web)\b",
+        re.I,
+    )),
+    ("mobile-app-design-performance", re.compile(
+        r"(mobile|react[- ]?native|expo|flutter|capacitor|ios|android|"
+        r"touch[- ]?target|safe[- ]?area|app\s*di\s*động|ứng\s*dụng\s*mobile|"
+        r"bottom[- ]?sheet|tab[- ]?bar|thumb[- ]?zone)",
+        re.I,
+    )),
+    ("react-native-expo-dev", re.compile(
+        r"(react[- ]?native|expo|expo[- ]?router|mmkv|sqlite|offline[- ]?first|"
+        r"native[- ]?stack|mobile[- ]?navigation)",
+        re.I,
+    )),
+    ("mobile-visual-qa-emulation", re.compile(
+        r"(mobile[- ]?qa|mobile[- ]?test|viewport[- ]?mobile|iphone|pixel[- ]?7|"
+        r"kiểm\s*thử\s*mobile|giả\s*lập\s*mobile)",
+        re.I,
+    )),
+    ("mobile-security-storage-audit", re.compile(
+        r"(secure[- ]?store|keychain|keystore|mobile[- ]?security|"
+        r"bảo\s*mật\s*mobile|deep[- ]?link)",
         re.I,
     )),
 ]
@@ -444,6 +478,19 @@ def match_skills_for_task(
             return chosen
 
     blob = f"{title}\n{description}"
+
+    # Dựng Mobile App → tự động gắn bộ Mobile skills cho từng Phase / Agent
+    if _MOBILE_CONTEXT.search(blob):
+        if ag in ("heiji", "haibara"):
+            defaults = _MOBILE_DEFAULTS_QA
+        elif ag in ("akai", "amuro"):
+            defaults = _MOBILE_DEFAULTS_SEC
+        else:
+            defaults = _MOBILE_DEFAULTS_BUILD
+        for name in defaults:
+            _try_add(name)
+            if len(chosen) >= max_skills:
+                return chosen
 
     # Dựng web/FE → tự gắn skill chất lượng (design + React; QA thêm a11y)
     if _WEB_FE_CONTEXT.search(blob):
