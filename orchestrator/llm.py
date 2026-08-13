@@ -102,7 +102,7 @@ async def chat(
                 raise LLMError(
                     "HTTP 413 Payload Too Large — ảnh/request vượt giới hạn provider."
                 )
-            # 400 với ảnh: thường model text-only — không retry vô ích
+            # 400 Bad Request: ghi nhận chi tiết body lỗi từ provider
             if resp.status_code == 400:
                 body = resp.text[:500]
                 has_image = any(
@@ -118,7 +118,7 @@ async def chat(
                     raise LLMError(
                         f"HTTP 400 Bad Request (model có thể không hỗ trợ ảnh): {body}"
                     )
-            resp.raise_for_status()
+                raise LLMError(f"HTTP 400 Bad Request: {body}")
             data = resp.json()
             # OpenCode đôi khi trả HTTP 200 kèm {"error":{...}} thay vì choices
             if isinstance(data, dict) and data.get("error") and "choices" not in data:
@@ -179,12 +179,13 @@ async def chat(
             )
 
             # Model có giới hạn output nhỏ hơn -> hạ max_tokens thay vì retry vô ích
-            if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 400:
-                body = e.response.text[:500].lower()
-                if "max_tokens" in body or "max output" in body or "too large" in body:
+            err_s = str(e).lower()
+            if (isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 400) or "400 bad request" in err_s:
+                body = (e.response.text[:500] if isinstance(e, httpx.HTTPStatusError) else err_s).lower()
+                if any(k in body for k in ("max_tokens", "max output", "too large", "context", "length", "exceed")):
                     reduced = max(4096, payload["max_tokens"] // 2)
                     if reduced < payload["max_tokens"]:
-                        log.warning("Provider từ chối max_tokens=%s -> hạ xuống %s", payload["max_tokens"], reduced)
+                        log.warning("Provider từ chối 400 (max_tokens=%s) -> hạ xuống %s", payload["max_tokens"], reduced)
                         payload["max_tokens"] = reduced
                         continue
 

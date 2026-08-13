@@ -1015,10 +1015,10 @@ body.sidebar-collapsed .sidebar-settings {
 }
 .msg-row { display: flex; gap: 12px; align-items: flex-start; width: 100%; }
 .msg-row.conan, .msg-row.system-msg { width: 100%; max-width: 100%; }
-.msg-row.user { align-self: flex-end; flex-direction: row; justify-content: flex-end; max-width: 80%; }
+.msg-row.user { align-self: flex-end; flex-direction: row; justify-content: flex-end; max-width: 85%; }
 
 .msg-conan-wrapper { display: flex; flex-direction: column; gap: 8px; flex: 1; min-width: 0; width: 100%; }
-.msg-user-wrapper { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; max-width: 100%; }
+.msg-user-wrapper { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; max-width: 100%; min-width: 0; }
 
 .msg-meta-conan {
   display: flex; align-items: center; gap: 8px;
@@ -1062,6 +1062,34 @@ body.sidebar-collapsed .sidebar-settings {
   color: #f1f5f9;
   text-align: left;
   box-sizing: border-box;
+}
+.chat-pre {
+  background: #090a0f;
+  border: 1px solid #27272a;
+  border-radius: 8px;
+  padding: 12px 16px;
+  overflow-x: auto;
+  font-family: "SF Mono", Consolas, ui-monospace, monospace;
+  font-size: 0.84rem;
+  line-height: 1.5;
+  margin: 8px 0;
+  max-width: 100%;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.chat-code {
+  font-family: "SF Mono", Consolas, ui-monospace, monospace;
+  font-size: 0.88em;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: #93c5fd;
+}
+.chat-pre .chat-code {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  color: #e4e4e7;
 }
 .chat-skill-pill {
   display: inline-flex;
@@ -1114,14 +1142,14 @@ body.sidebar-collapsed .sidebar-settings {
   align-items: stretch;
   gap: 10px;
   width: fit-content;
-  max-width: min(420px, 100%);
+  max-width: 100%;
   background: #141416;
   color: #f4f4f5;
   border: 1px solid #27272a;
   border-radius: 14px;
   border-top-right-radius: 4px;
   font-weight: 400;
-  padding: 12px 14px;
+  padding: 14px 18px;
   box-shadow: none;
 }
 .msg-bubble.conan-bubble {
@@ -1148,6 +1176,7 @@ body.sidebar-collapsed .sidebar-settings {
   text-align: left;
   line-height: 1.55;
   word-break: break-word;
+  width: 100%;
 }
 .msg-bubble.user-bubble .chat-img-link {
   margin: 0;

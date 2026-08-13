@@ -14,8 +14,8 @@ LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 
 # Model "thinking" đốt phần lớn budget vào reasoning_tokens; budget nhỏ khiến
 # content trả về rỗng hoặc JSON bị cắt giữa chừng (finish_reason=length).
-LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "16384"))
-LLM_MAX_TOKENS_CEILING = int(os.getenv("LLM_MAX_TOKENS_CEILING", "32768"))
+LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "8192"))
+LLM_MAX_TOKENS_CEILING = int(os.getenv("LLM_MAX_TOKENS_CEILING", "16384"))
 
 # Phân bổ model theo thế mạnh, tránh dồn hết cho một model:
 #   planner  — lập kế hoạch, chain-of-thought dài, tool calling tin cậy
@@ -45,10 +45,10 @@ WEB_DIR = ROOT_DIR / "web"
 # Giới hạn an toàn cho agent runtime
 MAX_AGENT_ITERATIONS = 45
 COMMAND_TIMEOUT_SECONDS = 120
-MAX_TOOL_OUTPUT_CHARS = 12_000
+MAX_TOOL_OUTPUT_CHARS = 8_000
 # Giữ N tool result gần nhất đủ dài; các tool cũ bị cắt để giảm input tokens
-TOOL_HISTORY_KEEP_RECENT = int(os.getenv("TOOL_HISTORY_KEEP_RECENT", "6"))
-TOOL_HISTORY_OLD_CHARS = int(os.getenv("TOOL_HISTORY_OLD_CHARS", "500"))
+TOOL_HISTORY_KEEP_RECENT = int(os.getenv("TOOL_HISTORY_KEEP_RECENT", "3"))
+TOOL_HISTORY_OLD_CHARS = int(os.getenv("TOOL_HISTORY_OLD_CHARS", "300"))
 MAX_CONCURRENT_AGENTS = 1
 CHAT_IMAGE_MAX_BYTES = 8 * 1024 * 1024
 # Nén ảnh trước khi gửi vision API (tránh 413 Payload Too Large — Cloudflare/Workers AI)

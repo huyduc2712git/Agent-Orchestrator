@@ -92,9 +92,10 @@ export function formatMarkdownMessage(text) {
   );
 
   const codeBlocks = [];
-  text = text.replace(/```([\s\S]*?)```/g, (_, code) => {
+  text = text.replace(/```(?:([a-zA-Z0-9_-]+)\n)?([\s\S]*?)```/g, (_, lang, code) => {
     const idx = codeBlocks.length;
-    codeBlocks.push(`<pre class="chat-pre"><code class="chat-code">${escapeHtml(code.trim())}</code></pre>`);
+    const langClass = lang ? ` class="chat-code language-${escapeHtml(lang.trim())}"` : ` class="chat-code"`;
+    codeBlocks.push(`<pre class="chat-pre"><code${langClass}>${escapeHtml((code || "").trim())}</code></pre>`);
     return `___CODEBLOCK_${idx}___`;
   });
 
